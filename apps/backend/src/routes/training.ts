@@ -195,6 +195,19 @@ Sadece Markdown çıktı ver, başka açıklama yapma.`
     stderr += data.toString()
   })
 
+  // spawn hatası yakala (ör. claude komutu bulunamadı)
+  child.on('error', (err) => {
+    const completedAt = new Date().toISOString()
+    const errorMsg = `Spawn hatası: ${err.message}`
+    console.error(`[Training] ${errorMsg}`)
+    db.prepare("UPDATE training_runs SET status = 'error', error = ?, completed_at = ? WHERE id = ?")
+      .run(errorMsg, completedAt, runId)
+    db.prepare("UPDATE training_profiles SET status = 'error', updated_at = ? WHERE id = ?")
+      .run(completedAt, profile.id)
+    const errorProfile = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(profile.id))
+    broadcastAll({ type: 'training:update', profile: errorProfile })
+  })
+
   // stdin'e prompt'u yaz
   child.stdin.write(coachPrompt)
   child.stdin.end()
@@ -204,7 +217,10 @@ Sadece Markdown çıktı ver, başka açıklama yapma.`
 
     if (code !== 0 || !stdout.trim()) {
       // Hata durumu
-      const errorMsg = stderr || 'Claude çalıştırılamadı veya boş çıktı döndü'
+      const errorMsg = stderr
+        ? `Çıkış kodu: ${code}\n${stderr}`
+        : `Claude çalıştırılamadı veya boş çıktı döndü (çıkış kodu: ${code})`
+      console.error(`[Training] Hata: ${errorMsg.slice(0, 500)}`)
       db.prepare("UPDATE training_runs SET status = 'error', error = ?, completed_at = ? WHERE id = ?")
         .run(errorMsg.slice(0, 2000), completedAt, runId)
       db.prepare("UPDATE training_profiles SET status = 'error', updated_at = ? WHERE id = ?")

@@ -31,6 +31,7 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
   const [userPrompt, setUserPrompt] = useState('')
   const [createLoading, setCreateLoading] = useState(false)
   const [trainLoading, setTrainLoading] = useState<string | null>(null)
+  const [lastError, setLastError] = useState<string | null>(null)
 
   const loadProfiles = async () => {
     setLoading(true)
@@ -71,6 +72,7 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
 
   const handleStartTraining = async (profileId: string) => {
     setTrainLoading(profileId)
+    setLastError(null)
     try {
       await api.startTraining(profileId)
       // Profili güncelle
@@ -86,6 +88,13 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
           if (updated.status === 'done' || updated.status === 'error') {
             clearInterval(pollInterval)
             setTrainLoading(null)
+            if (updated.status === 'error') {
+              try {
+                const runs = await api.getTrainingRuns(profileId)
+                const lastRun = runs[0]
+                if (lastRun?.error) setLastError(lastRun.error)
+              } catch {}
+            }
           }
         } catch {
           clearInterval(pollInterval)
@@ -289,7 +298,17 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
                         ? isNight ? 'bg-[#2a2b35]' : 'bg-slate-100'
                         : `hover:${cardBg}`
                     }`}
-                    onClick={() => setSelectedProfile(profile)}
+                    onClick={async () => {
+                      setSelectedProfile(profile)
+                      setLastError(null)
+                      if (profile.status === 'error') {
+                        try {
+                          const runs = await api.getTrainingRuns(profile.id)
+                          const lastRun = runs[0]
+                          if (lastRun?.error) setLastError(lastRun.error)
+                        } catch {}
+                      }
+                    }}
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-sm">{profile.mode === 'project' ? '📁' : '🔧'}</span>
@@ -394,6 +413,19 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
                     🗑
                   </button>
                 </div>
+
+                {/* Error Detail */}
+                {selectedProfile.status === 'error' && lastError && (
+                  <div className="p-4 rounded-xl border border-red-400/30 bg-red-500/10">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span>❌</span>
+                      <span className="text-xs font-bold text-red-500">{t('training.status.error')}</span>
+                    </div>
+                    <pre className={`text-xs whitespace-pre-wrap font-mono text-red-400 max-h-[200px] overflow-y-auto`}>
+                      {lastError}
+                    </pre>
+                  </div>
+                )}
 
                 {/* Content */}
                 {selectedProfile.content ? (
