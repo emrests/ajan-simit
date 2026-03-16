@@ -316,6 +316,111 @@ trainingRouter.post('/training-profiles/import', (req, res) => {
   res.status(201).json(profile)
 })
 
+// ─── GitHub / MD Toplu İçe Aktarma ───
+
+// Dosya adından profil adı oluştur: "engineering-code-reviewer.md" → "Engineering Code Reviewer"
+function fileNameToProfileName(fileName: string): string {
+  return fileName
+    .replace(/\.md$/i, '')
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase())
+}
+
+// POST /api/training-profiles/import-url — GitHub URL'den MD dosyaları çek
+trainingRouter.post('/training-profiles/import-url', async (req, res) => {
+  const { url } = req.body
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'url is required' }) as any
+  }
+
+  try {
+    const profiles: any[] = []
+    const now = new Date().toISOString()
+
+    // Raw URL: tek dosya
+    if (url.includes('raw.githubusercontent.com') && url.endsWith('.md')) {
+      const resp = await fetch(url)
+      if (!resp.ok) throw new Error(`Dosya indirilemedi: ${resp.status}`)
+      const content = await resp.text()
+      const fileName = url.split('/').pop() || 'imported.md'
+
+      const id = uuid()
+      db.prepare(`
+        INSERT INTO training_profiles (id, name, description, content, mode, source, user_prompt, status, created_at)
+        VALUES (?, ?, ?, ?, 'technology', ?, '', 'done', ?)
+      `).run(id, fileNameToProfileName(fileName), `GitHub: ${fileName}`, content, url, now)
+      profiles.push(rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(id)))
+
+    // GitHub dizin URL'si: github.com/user/repo/tree/branch/path
+    } else {
+      const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)/)
+      if (!match) throw new Error('Geçersiz GitHub URL. Beklenen format: github.com/user/repo/tree/branch/path')
+      const [, owner, repo, branch, dirPath] = match
+
+      // GitHub Contents API ile dizindeki dosyaları listele
+      const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}?ref=${branch}`
+      const dirResp = await fetch(apiUrl, {
+        headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'SmithAgentOffice' }
+      })
+      if (!dirResp.ok) throw new Error(`GitHub API hatası: ${dirResp.status}`)
+      const files = await dirResp.json() as any[]
+
+      const mdFiles = files.filter((f: any) => f.type === 'file' && f.name.endsWith('.md'))
+      if (mdFiles.length === 0) throw new Error('Dizinde .md dosyası bulunamadı')
+
+      // Her MD dosyasını indir
+      for (const file of mdFiles) {
+        try {
+          const rawUrl = file.download_url || `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dirPath}/${file.name}`
+          const fileResp = await fetch(rawUrl)
+          if (!fileResp.ok) continue
+          const content = await fileResp.text()
+
+          const id = uuid()
+          db.prepare(`
+            INSERT INTO training_profiles (id, name, description, content, mode, source, user_prompt, status, created_at)
+            VALUES (?, ?, ?, ?, 'technology', ?, '', 'done', ?)
+          `).run(id, fileNameToProfileName(file.name), `GitHub: ${file.name}`, content, rawUrl, now)
+          const profile = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(id))
+          broadcastAll({ type: 'training:update', profile })
+          profiles.push(profile)
+        } catch (e: any) {
+          console.error(`[Training] ${file.name} indirilemedi: ${e.message}`)
+        }
+      }
+    }
+
+    res.json({ profiles, count: profiles.length })
+  } catch (e: any) {
+    res.status(400).json({ error: e.message })
+  }
+})
+
+// POST /api/training-profiles/import-md — Lokal MD dosyaları yükle
+trainingRouter.post('/training-profiles/import-md', (req, res) => {
+  const { files } = req.body
+  if (!Array.isArray(files) || files.length === 0) {
+    return res.status(400).json({ error: 'files array is required' }) as any
+  }
+
+  const profiles: any[] = []
+  const now = new Date().toISOString()
+
+  for (const file of files) {
+    if (!file.name || !file.content) continue
+    const id = uuid()
+    db.prepare(`
+      INSERT INTO training_profiles (id, name, description, content, mode, source, user_prompt, status, created_at)
+      VALUES (?, ?, ?, ?, 'technology', ?, '', 'done', ?)
+    `).run(id, fileNameToProfileName(file.name), `Dosya: ${file.name}`, file.content, file.name, now)
+    const profile = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(id))
+    broadcastAll({ type: 'training:update', profile })
+    profiles.push(profile)
+  }
+
+  res.json({ profiles, count: profiles.length })
+})
+
 // ─── Agent Training Assignment ───
 
 // GET /api/agents/:agentId/training

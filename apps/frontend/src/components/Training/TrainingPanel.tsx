@@ -33,6 +33,12 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
   const [trainLoading, setTrainLoading] = useState<string | null>(null)
   const [lastError, setLastError] = useState<string | null>(null)
 
+  // GitHub / MD import
+  const [showGithubImport, setShowGithubImport] = useState(false)
+  const [githubUrl, setGithubUrl] = useState('')
+  const [importLoading, setImportLoading] = useState(false)
+  const [importResult, setImportResult] = useState<string | null>(null)
+
   const loadProfiles = async () => {
     setLoading(true)
     try {
@@ -146,6 +152,52 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
     input.click()
   }
 
+  const handleGithubImport = async () => {
+    if (!githubUrl.trim()) return
+    setImportLoading(true)
+    setImportResult(null)
+    try {
+      const result = await api.importFromGithub(githubUrl.trim())
+      setProfiles(prev => [...result.profiles, ...prev])
+      setImportResult(t('training.importSuccess').replace('{count}', String(result.count)))
+      setGithubUrl('')
+      setTimeout(() => setImportResult(null), 5000)
+    } catch (e: any) {
+      setImportResult(`❌ ${e.message || 'Hata'}`)
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  const handleMdUpload = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.md'
+    input.multiple = true
+    input.onchange = async (e) => {
+      const fileList = (e.target as HTMLInputElement).files
+      if (!fileList || fileList.length === 0) return
+      setImportLoading(true)
+      setImportResult(null)
+      try {
+        const files: Array<{ name: string; content: string }> = []
+        for (const file of Array.from(fileList)) {
+          const content = await file.text()
+          files.push({ name: file.name, content })
+        }
+        const result = await api.importMdFiles(files)
+        setProfiles(prev => [...result.profiles, ...prev])
+        setImportResult(t('training.importSuccess').replace('{count}', String(result.count)))
+        setTimeout(() => setImportResult(null), 5000)
+      } catch (e: any) {
+        setImportResult(`❌ ${e.message || 'Hata'}`)
+      } finally {
+        setImportLoading(false)
+      }
+    }
+    input.click()
+  }
+
   const bg = isNight ? 'bg-[#1a1b22]' : 'bg-white'
   const border = isNight ? 'border-[#2a2b35]' : 'border-slate-200'
   const text = isNight ? 'text-slate-200' : 'text-slate-800'
@@ -180,11 +232,26 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setShowGithubImport(!showGithubImport)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${showGithubImport ? 'border-blue-500/30 bg-blue-500/10 text-blue-500' : `${border} ${textMuted}`} hover:${text} transition-all`}
+              title={t('training.importGithub')}
+            >
+              🔗 GitHub
+            </button>
+            <button
+              onClick={handleMdUpload}
+              disabled={importLoading}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${border} ${textMuted} hover:${text} transition-all disabled:opacity-50`}
+              title={t('training.importMd')}
+            >
+              📄 MD
+            </button>
+            <button
               onClick={handleImport}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${border} ${textMuted} hover:${text} transition-all`}
               title={t('training.import')}
             >
-              📥 {t('training.import')}
+              📥 JSON
             </button>
             <button
               onClick={() => setShowCreate(!showCreate)}
@@ -197,6 +264,42 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
             </button>
           </div>
         </div>
+
+        {/* GitHub Import Bar */}
+        <AnimatePresence>
+          {showGithubImport && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className={`border-b ${border} overflow-hidden`}
+            >
+              <div className="px-4 py-3 flex items-center gap-2">
+                <span className="text-sm">🔗</span>
+                <input
+                  value={githubUrl}
+                  onChange={e => setGithubUrl(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleGithubImport()}
+                  placeholder={t('training.githubUrl')}
+                  className={`flex-1 px-3 py-1.5 rounded-lg text-xs border ${inputBg}`}
+                  disabled={importLoading}
+                />
+                <button
+                  onClick={handleGithubImport}
+                  disabled={importLoading || !githubUrl.trim()}
+                  className="px-4 py-1.5 rounded-lg text-xs font-bold bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-all"
+                >
+                  {importLoading ? '⏳' : t('training.fetch')}
+                </button>
+              </div>
+              {importResult && (
+                <div className={`px-4 pb-3 text-xs font-medium ${importResult.startsWith('❌') ? 'text-red-500' : 'text-emerald-500'}`}>
+                  {importResult}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Create Form */}
         <AnimatePresence>

@@ -282,6 +282,10 @@ export const api = {
     req<TrainingRun>(`/training-profiles/${id}/train`, { method: 'POST' }),
   getTrainingRuns: (profileId: string) =>
     req<TrainingRun[]>(`/training-profiles/${profileId}/runs`),
+  importFromGithub: (url: string) =>
+    req<{ profiles: TrainingProfile[]; count: number }>('/training-profiles/import-url', { method: 'POST', body: JSON.stringify({ url }) }),
+  importMdFiles: (files: Array<{ name: string; content: string }>) =>
+    req<{ profiles: TrainingProfile[]; count: number }>('/training-profiles/import-md', { method: 'POST', body: JSON.stringify({ files }) }),
 
   // Agent ↔ Training
   getAgentTraining: (agentId: string) =>

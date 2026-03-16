@@ -798,6 +798,12 @@ const translations: Record<string, string> = {
   'training.cancel': 'Cancel',
   'training.create': 'Create',
   'training.coach': 'Training Coach',
+  'training.importGithub': 'Import from GitHub',
+  'training.importMd': 'Upload MD Files',
+  'training.githubUrl': 'GitHub URL (repo folder or single file)',
+  'training.fetch': 'Fetch',
+  'training.importSuccess': '{count} profiles created',
+  'training.importing': 'Importing...',
 }
 
 export default translations

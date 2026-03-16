@@ -798,6 +798,12 @@ const translations: Record<string, string> = {
   'training.cancel': 'İptal',
   'training.create': 'Oluştur',
   'training.coach': 'Eğitim Koçu',
+  'training.importGithub': "GitHub'dan İçe Aktar",
+  'training.importMd': 'MD Dosya Yükle',
+  'training.githubUrl': 'GitHub URL (repo klasörü veya tek dosya)',
+  'training.fetch': 'Çek',
+  'training.importSuccess': '{count} profil oluşturuldu',
+  'training.importing': 'İçe aktarılıyor...',
 }
 
 export default translations
