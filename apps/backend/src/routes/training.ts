@@ -172,13 +172,14 @@ Sadece Markdown çıktı ver, başka açıklama yapma.`
   // Claude CLI'ı async olarak çalıştır
   const cliArgs: string[] = ['--print']
 
-  // Proje modu: --directory ile proje dizinine git
-  if (profile.mode === 'project' && profile.source) {
-    cliArgs.push('--directory', profile.source)
-  }
+  // Proje modu: cwd olarak proje dizinini kullan (Claude o dizindeki dosyaları görür)
+  const cwd = (profile.mode === 'project' && profile.source)
+    ? profile.source.trim()
+    : process.cwd()
 
   // Async spawn — response'ı hemen döner, sonuç WS ile broadcast edilir
   const child = spawn('claude', cliArgs, {
+    cwd,
     shell: true,
     env: { ...process.env },
     stdio: ['pipe', 'pipe', 'pipe'],
