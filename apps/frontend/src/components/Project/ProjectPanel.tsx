@@ -1554,13 +1554,13 @@ export function ProjectPanel({ office, onClose, onUpdate, isNight = false }: Pro
               <div className={`p-3 rounded-2xl border ${isNight ? 'bg-[#1a2a4a] border-[#2a4a8a]' : 'bg-[#faf7f4] border-[#e8d5c4]'}`}>
                 <p className={`text-xs font-bold mb-2 ${subtext}`}>{t('project.newTask')}</p>
                 <div className="space-y-2">
-                  <input
-                    type="text"
+                  <textarea
                     value={newTaskDesc}
                     onChange={e => setNewTaskDesc(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleCreateTask()}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleCreateTask() } }}
                     placeholder={t('project.taskDescPlaceholder')}
-                    className={inputCls}
+                    rows={3}
+                    className={`${inputCls} resize-y`}
                   />
                   <div className="flex gap-2">
                     <select

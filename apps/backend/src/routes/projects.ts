@@ -62,7 +62,8 @@ projectsRouter.get('/offices/:officeId/projects', (req, res) => {
 
 // POST /api/offices/:officeId/projects
 projectsRouter.post('/offices/:officeId/projects', (req, res) => {
-  const { name, description = '', workDir = '' } = req.body
+  const { name, description = '', workDir: rawWorkDir = '' } = req.body
+  const workDir = rawWorkDir.trim()
   if (!name) return res.status(400).json({ error: 'name is required' })
 
   const officeExists = db.prepare('SELECT id FROM offices WHERE id = ?').get(req.params.officeId)
@@ -94,7 +95,7 @@ projectsRouter.put('/projects/:id', (req, res) => {
       isolation_mode = COALESCE(?, isolation_mode)
     WHERE id = ?`
   ).run(
-    name ?? null, description ?? null, status ?? null, workDir ?? null,
+    name ?? null, description ?? null, status ?? null, workDir?.trim() ?? null,
     approvalPolicy ?? null, errorPolicy ?? null, workflowMode ?? null, pmAgentId ?? null,
     contextMode ?? null, claudeMd ?? null, extraInstructions ?? null, isolationMode ?? null,
     req.params.id

@@ -34,7 +34,7 @@ const activeSessions = new Map<string, ActiveSession>() // agentId → session
 // workDir → Claude JSONL dizin yolu kodlaması
 // Claude CLI, D:\4-Sample-Tutorial\TicTacToe → D--4-Sample-Tutorial-TicTacToe şeklinde kodlar
 function encodeWorkDir(workDir: string): string {
-  return workDir.replace(/[/\\]/g, '-').replace(/:/g, '-')
+  return workDir.trim().replace(/[/\\]/g, '-').replace(/:/g, '-')
 }
 
 // Claude projects dizinini bul — büyük/küçük harf farklılıklarını handle et
@@ -173,11 +173,11 @@ Yanıtını aşağıdaki JSON formatında ver:
 JSON dışında başka bir şey yazma.`
 
   // Asenkron olarak Claude'u çağır (event loop'u bloke etmemek için spawn kullan)
-  const cliArgs = ['--print', '--dangerously-skip-permissions', '--output-format', 'text']
+  const cliArgs = ['--print', '--dangerously-skip-permissions', '--output-format', 'text', '--max-turns', '10']
   if (pmAgent.model) cliArgs.push('--model', pmAgent.model)
 
   const pmProc = spawn('claude', cliArgs, {
-    cwd: project.work_dir,
+    cwd: project.work_dir?.trim() || process.cwd(),
     shell: true,
     env: { ...process.env },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -283,11 +283,11 @@ Görevin:
 
 Yanıtını Türkçe ver, kısa ve öz tut.`
 
-  const cliArgs = ['--print', '--dangerously-skip-permissions', '--output-format', 'text']
+  const cliArgs = ['--print', '--dangerously-skip-permissions', '--output-format', 'text', '--max-turns', '10']
   if (pmAgent.model) cliArgs.push('--model', pmAgent.model)
 
   const pmProc = spawn('claude', cliArgs, {
-    cwd: project.work_dir,
+    cwd: project.work_dir?.trim() || process.cwd(),
     shell: true,
     env: { ...process.env },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -382,11 +382,11 @@ Bu isteği değerlendir:
 
 Yanıtının İLK satırında sadece "ONAYLA" veya "REDDET" yaz. Sonra gerekçeni açıkla. Türkçe yanıt ver.`
 
-  const cliArgs = ['--print', '--dangerously-skip-permissions', '--output-format', 'text']
+  const cliArgs = ['--print', '--dangerously-skip-permissions', '--output-format', 'text', '--max-turns', '5']
   if (pmAgent.model) cliArgs.push('--model', pmAgent.model)
 
   const pmProc = spawn('claude', cliArgs, {
-    cwd: project.work_dir || process.cwd(),
+    cwd: project.work_dir?.trim() || process.cwd(),
     shell: true,
     env: { ...process.env },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -477,11 +477,11 @@ Görevin:
 
 Yanıtını Türkçe ver, kısa tut.`
 
-    const cliArgs = ['--print', '--dangerously-skip-permissions', '--output-format', 'text']
+    const cliArgs = ['--print', '--dangerously-skip-permissions', '--output-format', 'text', '--max-turns', '10']
     if (pmAgent.model) cliArgs.push('--model', pmAgent.model)
 
     const pmProc = spawn('claude', cliArgs, {
-      cwd: project.work_dir || process.cwd(),
+      cwd: project.work_dir?.trim() || process.cwd(),
       shell: true,
       env: { ...process.env },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -785,6 +785,7 @@ function extractTaskDescription(prompt: string): string {
 }
 
 export function startSession(agentId: string, workDir: string, task: string, taskId?: string) {
+  workDir = workDir?.trim() || process.cwd()
   // Mevcut oturum varsa durdur
   if (activeSessions.has(agentId)) {
     stopSession(agentId)
@@ -930,7 +931,8 @@ export function startSession(agentId: string, workDir: string, task: string, tas
     }
   }
 
-  // Faz 9 — Max turns: görev > ajan > varsayılan (0 = sınırsız)
+  // Faz 9 — Max turns: görev > ajan > varsayılan (15)
+  const DEFAULT_MAX_TURNS = 15
   let effectiveMaxTurns = 0
   if (taskId) {
     const taskRow = db.prepare('SELECT max_turns FROM tasks WHERE id = ?').get(taskId) as any
@@ -938,6 +940,9 @@ export function startSession(agentId: string, workDir: string, task: string, tas
   }
   if (effectiveMaxTurns === 0 && agent.max_turns > 0) {
     effectiveMaxTurns = agent.max_turns
+  }
+  if (effectiveMaxTurns === 0) {
+    effectiveMaxTurns = DEFAULT_MAX_TURNS
   }
 
   // Claude CLI'yı başlat
@@ -961,16 +966,16 @@ export function startSession(agentId: string, workDir: string, task: string, tas
   // Faz 11 — Environment variables (effort level + custom vars)
   const agentEnv: Record<string, string> = { ...process.env } as any
 
-  // Efor seviyesi: görev > ajan > yok
+  // Efor seviyesi: görev > ajan > varsayılan (low)
+  const DEFAULT_EFFORT_LEVEL = 'low'
   let effectiveEffort = ''
   if (taskId) {
     const taskRow2 = db.prepare('SELECT effort_level FROM tasks WHERE id = ?').get(taskId) as any
     if (taskRow2?.effort_level) effectiveEffort = taskRow2.effort_level
   }
   if (!effectiveEffort && agent.effort_level) effectiveEffort = agent.effort_level
-  if (effectiveEffort) {
-    agentEnv.CLAUDE_CODE_EFFORT_LEVEL = effectiveEffort
-  }
+  if (!effectiveEffort) effectiveEffort = DEFAULT_EFFORT_LEVEL
+  agentEnv.CLAUDE_CODE_EFFORT_LEVEL = effectiveEffort
   if (agent.environment_vars) {
     const envVars = typeof agent.environment_vars === 'string'
       ? (() => { try { return JSON.parse(agent.environment_vars) } catch { return {} } })()
