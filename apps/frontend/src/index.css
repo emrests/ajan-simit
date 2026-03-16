@@ -1,0 +1,179 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Nunito', system-ui, sans-serif;
+  background-color: #f0f2f5;
+  color: #1e293b;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Ofis zemin desenleri */
+.office-floor {
+  background-color: #f0f2f5;
+  background-image:
+    radial-gradient(circle, rgba(100, 116, 139, 0.18) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.office-floor-dark {
+  background-color: #14151a;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Cam bölme üst kenar efekti */
+.room-glass-edge {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.6) 30%, rgba(255,255,255,0.8) 50%, rgba(255,255,255,0.6) 70%, transparent);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Aktif oturum masa glow */
+@keyframes desk-glow-pulse {
+  0%, 100% { box-shadow: 0 0 6px 2px rgba(126,181,166,0.3); }
+  50%       { box-shadow: 0 0 14px 5px rgba(126,181,166,0.55); }
+}
+.desk-active-glow { animation: desk-glow-pulse 2s ease-in-out infinite; }
+
+/* Toplantı masası glow */
+@keyframes meeting-glow {
+  0%, 100% { box-shadow: 0 4px 24px rgba(126,181,166,0.1); }
+  50%       { box-shadow: 0 4px 32px rgba(126,181,166,0.22); }
+}
+.meeting-table-active { animation: meeting-glow 3s ease-in-out infinite; }
+
+/* Hayvan karakter animasyonları */
+@keyframes idle-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes typing-hands {
+  0%, 100% { transform: translateY(0) scaleX(1); }
+  33% { transform: translateY(-2px) scaleX(0.98); }
+  66% { transform: translateY(1px) scaleX(1.02); }
+}
+
+@keyframes thinking-tilt {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  25% { transform: rotate(-8deg) translateY(-2px); }
+  75% { transform: rotate(8deg) translateY(-2px); }
+}
+
+@keyframes reading-eyes {
+  0%, 100% { transform: translateX(0); }
+  33% { transform: translateX(-3px); }
+  66% { transform: translateX(3px); }
+}
+
+@keyframes celebrating-jump {
+  0%, 100% { transform: translateY(0) scale(1); }
+  25% { transform: translateY(-12px) scale(1.05); }
+  50% { transform: translateY(-6px) scale(1.02); }
+  75% { transform: translateY(-10px) scale(1.04); }
+}
+
+@keyframes waiting-sleep {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-3px) scale(1.02); }
+}
+
+@keyframes bubble-appear {
+  0% { transform: scale(0) translateY(4px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+@keyframes z-float {
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  50% { opacity: 1; }
+  100% { transform: translateY(-16px) scale(1); opacity: 0; }
+}
+
+@keyframes confetti-fall {
+  0% { transform: translateY(-10px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(20px) rotate(360deg); opacity: 0; }
+}
+
+.animal-idle { animation: idle-float 2.5s ease-in-out infinite; }
+.animal-typing { animation: typing-hands 0.4s ease-in-out infinite; }
+.animal-thinking { animation: thinking-tilt 1.8s ease-in-out infinite; }
+.animal-reading { animation: reading-eyes 1.2s ease-in-out infinite; }
+.animal-celebrating { animation: celebrating-jump 0.6s ease-in-out infinite; }
+.animal-waiting { animation: waiting-sleep 2s ease-in-out infinite; }
+
+/* Oturma pozisyonu — sallanma/yüzme yok, sadece subtle hareket */
+@keyframes seated-subtle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+}
+
+@keyframes seated-typing {
+  0%, 100% { transform: translateY(0); }
+  25% { transform: translateY(-1px); }
+  75% { transform: translateY(0.5px); }
+}
+
+.animal-seated.animal-idle { animation: none; }
+.animal-seated.animal-thinking { animation: seated-subtle 2.5s ease-in-out infinite; }
+.animal-seated.animal-typing { animation: seated-typing 0.5s ease-in-out infinite; }
+.animal-seated.animal-reading { animation: seated-subtle 3s ease-in-out infinite; }
+.animal-seated.animal-waiting { animation: seated-subtle 2.5s ease-in-out infinite; }
+.animal-seated.animal-celebrating { animation: celebrating-jump 0.6s ease-in-out infinite; }
+
+.speech-bubble {
+  animation: bubble-appear 0.2s ease-out forwards;
+}
+
+/* Kahve köşesi yürüme animasyonu */
+@keyframes walking-wander {
+  0%   { transform: translateX(0px) translateY(0px); }
+  25%  { transform: translateX(24px) translateY(-2px); }
+  50%  { transform: translateX(0px) translateY(0px); }
+  75%  { transform: translateX(-24px) translateY(-2px); }
+  100% { transform: translateX(0px) translateY(0px); }
+}
+
+@keyframes leg-swing {
+  0%, 100% { transform-origin: center 72px; transform: rotate(0deg); }
+  25%  { transform-origin: center 72px; transform: rotate(12deg); }
+  75%  { transform-origin: center 72px; transform: rotate(-12deg); }
+}
+
+.animal-walking {
+  animation: walking-wander 6s ease-in-out infinite;
+}
+
+.animal-walking svg .leg-left {
+  animation: leg-swing 0.8s ease-in-out infinite;
+}
+
+.animal-walking svg .leg-right {
+  animation: leg-swing 0.8s ease-in-out 0.4s infinite;
+}
+
+/* Scrollbar özelleştirme */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.55); }

@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Vite
+apps/frontend/.vite/
+
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript cache
+*.tsbuildinfo
+
+# JSONL transcripts (runtime generated)
+*.jsonl
+
+# Worktree working directories
+worktrees/
+
+# External repos / submodules
+awesome-claude-skills/
+claude-code/
+superpowers/
+
+# Project tracking docs
+PROGRESS.md
+ROADMAP.md
+
+# Claude Code settings
+.claude/
