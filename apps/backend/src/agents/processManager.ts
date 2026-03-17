@@ -1059,12 +1059,16 @@ export function startSession(agentId: string, workDir: string, task: string, tas
     }
   }
 
+  console.log(`[Process ${agentId}] Claude CLI başlatılıyor — cwd: ${effectiveWorkDir}, args: ${cliArgs.join(' ')}, promptLength: ${fullPrompt.length}`)
+
   const proc = spawn('claude', cliArgs, {
     cwd: effectiveWorkDir,
     shell: true,
     env: agentEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
+
+  console.log(`[Process ${agentId}] PID: ${proc.pid ?? 'undefined'}`)
 
   // Spawn hatası yakala
   proc.on('error', (err) => {
@@ -1076,10 +1080,22 @@ export function startSession(agentId: string, workDir: string, task: string, tas
     saveAndBroadcastMessage(agent.office_id, agentId, agent.name, `❌ Claude başlatılamadı: ${err.message}`, 'system')
   })
 
-  // Task prompt'unu stdin üzerinden ilet
+  // Task prompt'unu stdin üzerinden ilet (büyük prompt'lar için drain kontrolü)
   try {
-    proc.stdin?.write(fullPrompt)
-    proc.stdin?.end()
+    if (proc.stdin) {
+      const ok = proc.stdin.write(fullPrompt)
+      if (ok) {
+        proc.stdin.end()
+      } else {
+        // Buffer dolu — drain event'ini bekle
+        proc.stdin.once('drain', () => {
+          proc.stdin?.end()
+        })
+      }
+      proc.stdin.on('error', (e) => {
+        console.error(`[Process ${agentId}] stdin hatası:`, e.message)
+      })
+    }
   } catch (e: any) {
     console.error(`[Process ${agentId}] stdin yazma hatası:`, e.message)
   }
@@ -1204,6 +1220,7 @@ export function startSession(agentId: string, workDir: string, task: string, tas
 
   proc.on('close', (code) => {
     clearInterval(stuckCheck)
+    console.log(`[Process ${agentId}] Claude CLI kapandı — kod: ${code}, tokens: in=${session.inputTokens} out=${session.outputTokens}, stderr: ${stderrBuf.slice(0, 200) || '(boş)'}`)
 
     // Faz 9 — Token logunu finalize et + Faz 11 — Structured output doğrulama
     if (session.sessionLogId) {
