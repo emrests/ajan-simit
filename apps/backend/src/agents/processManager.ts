@@ -1175,14 +1175,25 @@ export function startSession(agentId: string, workDir: string, task: string, tas
     console.error(`[Process ${agentId}] stderr:`, chunk.toString().slice(0, 200))
   })
 
-  // Takılı kalma kontrolü — 60 saniye boyunca hiç output gelmezse uyar
+  // Takılı kalma kontrolü — 60s uyar, 300s (5 dk) sonra otomatik kill
+  const STUCK_WARN_MS = 60000
+  const STUCK_KILL_MS = 300000
   const stuckCheck = setInterval(() => {
     if (!activeSessions.has(agentId)) {
       clearInterval(stuckCheck)
       return
     }
     const elapsed = Date.now() - lastOutputTime
-    if (elapsed > 60000) {
+    if (elapsed > STUCK_KILL_MS) {
+      clearInterval(stuckCheck)
+      saveAndBroadcastMessage(
+        agent.office_id, agentId, agent.name,
+        `❌ ${Math.round(elapsed / 1000)}s boyunca yanıt yok — oturum zaman aşımına uğradı, sonlandırılıyor`,
+        'system'
+      )
+      try { proc.kill('SIGTERM') } catch {}
+      setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 5000)
+    } else if (elapsed > STUCK_WARN_MS) {
       saveAndBroadcastMessage(
         agent.office_id, agentId, agent.name,
         `⏳ ${Math.round(elapsed / 1000)}s boyunca yanıt yok — Claude düşünüyor veya takılmış olabilir`,
