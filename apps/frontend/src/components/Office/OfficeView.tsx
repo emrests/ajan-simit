@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import { motion, LayoutGroup, AnimatePresence } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
-import type { Office, Agent, AgentMessage } from '@smith/types'
+import type { Office, Agent, AgentMessage, AgentQuestion } from '@smith/types'
 import { AgentDesk } from './AgentDesk'
 import { AgentModal } from '../Agent/AgentModal'
 import { ProjectPanel } from '../Project/ProjectPanel'
@@ -9,6 +9,8 @@ import { ProjectCompleteModal } from '../Project/ProjectCompleteModal'
 import { DashboardPanel } from '../Dashboard/DashboardPanel'
 import { SessionReplayPanel } from '../SessionReplay/SessionReplayPanel'
 import { HelpPanel } from '../Help/HelpPanel'
+import { QuickTaskPanel } from '../QuickTask/QuickTaskPanel'
+import { AgentQuestionModal } from '../Agent/AgentQuestionModal'
 import { useStore } from '../../store/useStore'
 import { api } from '../../hooks/useApi'
 
@@ -91,10 +93,14 @@ export function OfficeView({ office, onOfficeUpdate }: OfficeViewProps) {
   const [showDashboard, setShowDashboard] = useState(false)
   const [showReplay, setShowReplay] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [showQuickTask, setShowQuickTask] = useState(false)
+  const [quickTaskAgentId, setQuickTaskAgentId] = useState<string | null>(null)
 
   const messages = useStore((s) => s.messages)
   const completedProject = useStore((s) => s.completedProject)
   const setCompletedProject = useStore((s) => s.setCompletedProject)
+  const pendingQuestion = useStore((s) => s.pendingQuestion)
+  const setPendingQuestion = useStore((s) => s.setPendingQuestion)
 
   const theme = THEMES[office.theme as keyof typeof THEMES] ?? THEMES.light
   const isNight = theme.isDark
@@ -166,6 +172,21 @@ export function OfficeView({ office, onOfficeUpdate }: OfficeViewProps) {
             ? 'bg-[#1e1f28]/80 border-[#35363f]/60'
             : 'bg-slate-100/80 border-white/60'
         }`}>
+          <button
+            onClick={() => setShowQuickTask(true)}
+            disabled={office.agents.length === 0}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-40 ${
+              isNight
+                ? 'text-amber-400/80 hover:bg-[#2a2b35]/60'
+                : 'text-amber-600 hover:bg-white hover:text-amber-700 hover:shadow-sm'
+            }`}
+          >
+            <span className="text-sm">⚡</span>
+            <span>{t('quickTask.title')}</span>
+          </button>
+
+          <div className={`w-px h-5 ${isNight ? 'bg-slate-700/60' : 'bg-slate-200'}`} />
+
           <button
             onClick={() => setShowProjects(true)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 ${
@@ -273,6 +294,7 @@ export function OfficeView({ office, onOfficeUpdate }: OfficeViewProps) {
                       <AgentDesk
                         agent={agent}
                         onClick={() => setSelectedAgent(agent)}
+                        onQuickTask={() => { setQuickTaskAgentId(agent.id); setShowQuickTask(true) }}
                         isNight={isNight}
                         seated
                       />
@@ -325,6 +347,7 @@ export function OfficeView({ office, onOfficeUpdate }: OfficeViewProps) {
                         <AgentDesk
                           agent={agent}
                           onClick={() => setSelectedAgent(agent)}
+                          onQuickTask={() => { setQuickTaskAgentId(agent.id); setShowQuickTask(true) }}
                           isNight={isNight}
                           showDesk={false}
                         />
@@ -373,6 +396,7 @@ export function OfficeView({ office, onOfficeUpdate }: OfficeViewProps) {
                         <AgentDesk
                           agent={agent}
                           onClick={() => setSelectedAgent(agent)}
+                          onQuickTask={() => { setQuickTaskAgentId(agent.id); setShowQuickTask(true) }}
                           isNight={isNight}
                           showDesk={false}
                           seated
@@ -478,6 +502,17 @@ export function OfficeView({ office, onOfficeUpdate }: OfficeViewProps) {
         />
       )}
 
+      {/* Hızlı Görev */}
+      <AnimatePresence>
+        {showQuickTask && (
+          <QuickTaskPanel
+            isNight={isNight}
+            onClose={() => { setShowQuickTask(false); setQuickTaskAgentId(null) }}
+            preSelectedAgentId={quickTaskAgentId ?? undefined}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Yardim / Kullanim Kilavuzu */}
       {showHelp && (
         <HelpPanel
@@ -494,6 +529,32 @@ export function OfficeView({ office, onOfficeUpdate }: OfficeViewProps) {
           isNight={isNight}
         />
       )}
+
+      {/* Ajan soru modalı */}
+      <AnimatePresence>
+        {pendingQuestion && (
+          <AgentQuestionModal
+            question={pendingQuestion}
+            isNight={isNight}
+            onRespond={async (response) => {
+              try {
+                await api.respondToAgent(pendingQuestion.agentId, response)
+              } catch (e: any) {
+                console.error('Respond error:', e.message)
+              }
+              setPendingQuestion(null)
+            }}
+            onSkip={async () => {
+              try {
+                await api.skipAgentQuestion(pendingQuestion.agentId)
+              } catch (e: any) {
+                console.error('Skip error:', e.message)
+              }
+              setPendingQuestion(null)
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

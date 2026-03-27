@@ -63,6 +63,10 @@ const translations: Record<string, string> = {
   'sidebar.resetDbLoading': 'Resetting...',
   'sidebar.resetDbTitle': 'Reset entire database — offices, agents, projects, skills, subagents, hooks, teams',
   'sidebar.templateButton': 'Add ready-made team template',
+  'sidebar.exportOffice': 'Export Office',
+  'sidebar.importOffice': 'Import Office',
+  'sidebar.importLoading': 'Importing...',
+  'sidebar.importError': 'Import failed — invalid file format',
 
   // Confirm dialogs (sidebar)
   'confirm.resetDb': 'Are you sure you want to reset the entire database?\n\nThis action cannot be undone. All offices, agents, projects, tasks, skills, subagents, hooks, teams and MCP servers will be deleted.',
@@ -100,6 +104,7 @@ const translations: Record<string, string> = {
   // ============================================================
   'agent.claudeCodeActive': 'Claude Code active',
   'agent.jsonlWatching': 'Watching JSONL',
+  'agent.quickTask': 'Quick Task',
 
   // ============================================================
   // Status labels — from @smith/types STATUS_LABELS
@@ -110,6 +115,8 @@ const translations: Record<string, string> = {
   'status.reading': 'Reading',
   'status.waiting': 'Waiting',
   'status.celebrating': 'Completed!',
+  'status.waiting_input': 'Waiting for Response',
+  'status.rate_limited': 'Rate Limited',
 
   // ============================================================
   // Team status labels — from @smith/types
@@ -236,6 +243,11 @@ const translations: Record<string, string> = {
   'agent.agentNamePlaceholder': 'e.g. Mehmet, Alex, Luna...',
   'agent.role': 'Role / Expertise',
   'agent.rolePlaceholder': 'e.g. Backend Dev, Project Manager, QA...',
+  'agent.isPm': 'Project Manager (PM)',
+  'agent.isPmDesc': 'This agent coordinates quick tasks and distributes subtasks to other agents.',
+  'agent.workDir': 'Work Directory',
+  'agent.workDirPlaceholder': 'e.g. D:\\projects\\backend',
+  'agent.workDirDesc': 'Default work directory for this agent. Falls back to office directory if empty.',
   'agent.model': 'Claude Model',
   'agent.modelDefault': 'Default (claude-sonnet-4-6)',
   'agent.modelOpus': 'Claude Opus 4.6 (most powerful)',
@@ -304,7 +316,6 @@ const translations: Record<string, string> = {
   'agent.startSession': 'Start New Session',
   'agent.startSessionButton': 'Start Claude Session',
   'agent.startingSession': 'Starting...',
-  'agent.workDir': 'Working Directory',
   'agent.selectProject': '— Select project —',
   'agent.manualInput': 'Enter manually',
   'agent.task': 'Task',
@@ -454,6 +465,7 @@ const translations: Record<string, string> = {
   'project.contextFull': 'Full — All completed tasks given as context',
   'project.contextCompact': 'Compact — Last 3 tasks + summary (token-efficient)',
   'project.contextMinimal': 'Minimal — Only "N/M tasks completed" (most efficient)',
+  'project.contextNone': 'None — No project context added, only task description',
   'project.claudeMd': 'CLAUDE.md',
   'project.claudeMdLabel': 'project rules',
   'project.claudeMdDesc': 'Written to project folder, automatically read in Claude sessions. Keep system prompt short, write rules here.',
@@ -676,14 +688,16 @@ const translations: Record<string, string> = {
   // Help — HelpPanel.tsx
   // ============================================================
   'help.title': 'User Guide',
-  'help.subtitle': 'SmithAgentOffice — All Features',
-  'help.footer': 'SmithAgentOffice v1.0 — Claude Code Agent Orchestration Platform',
+  'help.subtitle': 'AjanSimit — All Features',
+  'help.footer': 'AjanSimit — Claude Code Agent Orchestration Platform',
 
   // Help sections
   'help.start.title': 'Quick Start',
   'help.agents.title': 'Agent Management',
+  'help.quickTask.title': 'Quick Task',
   'help.projects.title': 'Project & Task Management',
   'help.sessions.title': 'Sessions & Transcript',
+  'help.training.title': 'Agent Training',
   'help.workflow.title': 'Workflow Settings',
   'help.skills.title': 'Skills',
   'help.hooks.title': 'Hooks (Event Automation)',
@@ -778,6 +792,7 @@ const translations: Record<string, string> = {
   'training.description': 'Coach Instructions',
   'training.startTraining': 'Start Training',
   'training.retrain': 'Retrain',
+  'training.reset': 'Reset',
   'training.status.pending': 'Pending',
   'training.status.analyzing': 'Analyzing',
   'training.status.generating': 'Generating',
@@ -804,6 +819,43 @@ const translations: Record<string, string> = {
   'training.fetch': 'Fetch',
   'training.importSuccess': '{count} profiles created',
   'training.importing': 'Importing...',
+
+  // Quick Task
+  'quickTask.title': 'Quick Task',
+  'quickTask.selectAgent': 'Select Agent',
+  'quickTask.noAgents': 'No agents in this office',
+  'quickTask.workDir': 'Work Directory',
+  'quickTask.workDirPlaceholder': 'C:\\projects\\my-app',
+  'quickTask.saveWorkDir': 'Save',
+  'quickTask.savedWorkDir': 'Saved for this office',
+  'quickTask.task': 'Task Description',
+  'quickTask.taskPlaceholder': 'E.g.: Create an endpoint that does X...',
+  'quickTask.start': 'Start',
+  'quickTask.starting': 'Starting...',
+  'quickTask.started': 'Task started!',
+  'quickTask.recentTasks': 'Recent Tasks',
+  'quickTask.noAgent': 'Please select an agent',
+  'quickTask.noTask': 'Please enter a task description',
+  'quickTask.allAgents': 'All Agents',
+  'quickTask.allAgentsDesc': 'Send task to all idle agents',
+  'quickTask.allAgentsHint': '{{count}} agents ready',
+  'quickTask.noIdleAgents': 'No available agents — all agents are busy',
+  'quickTask.startedAll': '{{succeeded}}/{{total}} agents started',
+  'quickTask.pmWillCoordinate': 'PM will coordinate',
+  'quickTask.pmCoordinating': 'PM planning task...',
+  'quickTask.pmDone': 'PM distributed tasks to {{count}} agents',
+
+  // ============================================================
+  // Agent Question — Q&A system
+  // ============================================================
+  'agentQuestion.title': 'Agent Question',
+  'agentQuestion.from': '{{name}} is asking',
+  'agentQuestion.waiting': 'Waiting for response...',
+  'agentQuestion.options': 'Options',
+  'agentQuestion.respond': 'Respond',
+  'agentQuestion.skip': 'Skip',
+  'agentQuestion.placeholder': 'Type your response...',
+  'agentQuestion.answered': 'Answered',
 }
 
 export default translations

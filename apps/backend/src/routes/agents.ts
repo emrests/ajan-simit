@@ -30,6 +30,8 @@ function rowToAgent(a: any) {
     outputSchema: a.output_schema || '',
     subagentId: a.subagent_id || undefined,
     trainingProfileId: a.training_profile_id || undefined,
+    isPm: !!a.is_pm,
+    workDir: a.work_dir || '',
     deskPosition: { x: a.desk_x, y: a.desk_y },
     status: a.status,
     currentTask: a.current_task,
@@ -106,7 +108,7 @@ agentsRouter.put('/agents/:id', (req, res) => {
     name, role, animal, systemPrompt, model, maxTurns, deskPosition, status, currentTask,
     // Faz 11
     effortLevel, allowedTools, disallowedTools, environmentVars, appendSystemPrompt, systemPromptFile, outputSchema,
-    subagentId,
+    subagentId, isPm, workDir,
   } = req.body
   const existing = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id) as any
   if (!existing) return res.status(404).json({ error: 'Agent not found' }) as any
@@ -127,6 +129,8 @@ agentsRouter.put('/agents/:id', (req, res) => {
       system_prompt_file = COALESCE(?, system_prompt_file),
       output_schema = COALESCE(?, output_schema),
       subagent_id = COALESCE(?, subagent_id),
+      is_pm = COALESCE(?, is_pm),
+      work_dir = COALESCE(?, work_dir),
       desk_x = COALESCE(?, desk_x),
       desk_y = COALESCE(?, desk_y),
       status = COALESCE(?, status),
@@ -143,6 +147,8 @@ agentsRouter.put('/agents/:id', (req, res) => {
     systemPromptFile ?? null,
     outputSchema ?? null,
     subagentId !== undefined ? subagentId : null,
+    isPm !== undefined ? (isPm ? 1 : 0) : null,
+    workDir !== undefined ? workDir : null,
     deskPosition?.x ?? null, deskPosition?.y ?? null,
     status ?? null, currentTask !== undefined ? currentTask : existing.current_task,
     req.params.id

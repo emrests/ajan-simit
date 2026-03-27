@@ -671,6 +671,7 @@ export function ProjectPanel({ office, onClose, onUpdate, isNight = false }: Pro
                       <option value="full">📝 {t('project.contextFull')}</option>
                       <option value="compact">📦 {t('project.contextCompact')}</option>
                       <option value="minimal">⚡ {t('project.contextMinimal')}</option>
+                      <option value="none">🚫 {t('project.contextNone')}</option>
                     </select>
                   </div>
 

@@ -6,6 +6,7 @@ import { useStore } from '../../store/useStore'
 import { api } from '../../hooks/useApi'
 import { TemplateModal } from './TemplateModal'
 import { TrainingPanel } from '../Training/TrainingPanel'
+import { QuickTaskPanel } from '../QuickTask/QuickTaskPanel'
 import logoLight from '../../assets/logo-light-small.png'
 import logoDark from '../../assets/logo-dark-small.png'
 
@@ -30,6 +31,10 @@ export function OfficeSidebar({ onSelectOffice, onOfficesChange, isNight = false
   const [seedLightLoading, setSeedLightLoading] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
+  const [showQuickTask, setShowQuickTask] = useState(false)
+  const [editingWorkDir, setEditingWorkDir] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState<string | null>(null)
+  const [importLoading, setImportLoading] = useState(false)
 
   const handleCreate = async () => {
     if (!newName.trim()) return
@@ -79,6 +84,47 @@ export function OfficeSidebar({ onSelectOffice, onOfficesChange, isNight = false
     }
   }
 
+  const handleExport = async (e: React.MouseEvent, office: Office) => {
+    e.stopPropagation()
+    try {
+      const data = await api.exportOffice(office.id)
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${office.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.smith.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {}
+  }
+
+  const handleImport = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = async (e: any) => {
+      const file = e.target?.files?.[0]
+      if (!file) return
+      setImportLoading(true)
+      try {
+        const text = await file.text()
+        const data = JSON.parse(text)
+        if (data._type !== 'smith-office') {
+          alert(t('sidebar.importError'))
+          return
+        }
+        const office = await api.importOffice(data)
+        onOfficesChange()
+        onSelectOffice(office.id)
+      } catch {
+        alert(t('sidebar.importError'))
+      } finally {
+        setImportLoading(false)
+      }
+    }
+    input.click()
+  }
+
   const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation()
     if (!confirm(t('confirm.deleteOffice', { name }))) return
@@ -99,14 +145,17 @@ export function OfficeSidebar({ onSelectOffice, onOfficesChange, isNight = false
 
         <AnimatePresence>
           {offices.map((office) => (
-            <motion.button
+            <motion.div
               key={office.id}
-              className={`w-full text-left px-3 py-3 rounded-xl border transition-all group relative overflow-hidden ${
+              role="button"
+              tabIndex={0}
+              className={`w-full text-left px-3 py-3 rounded-xl border transition-all group relative overflow-hidden cursor-pointer ${
                 activeOfficeId === office.id
                   ? isNight ? 'border-[#7eb5a6]/40 bg-[#7eb5a6]/10 shadow-sm' : 'border-slate-200 bg-slate-50 shadow-sm'
                   : isNight ? 'border-transparent hover:border-[#2a2b35] hover:bg-[#2a2b35]/50' : 'border-transparent hover:border-slate-200 hover:bg-slate-50/80'
               }`}
               onClick={() => onSelectOffice(office.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelectOffice(office.id) }}
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
@@ -120,7 +169,45 @@ export function OfficeSidebar({ onSelectOffice, onOfficesChange, isNight = false
                   {office.theme === 'dark' ? '🌙' : '☀️'}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <p className={`font-bold text-sm truncate ${isNight ? 'text-slate-200' : 'text-slate-800'}`}>{office.name}</p>
+                  {activeOfficeId === office.id && editingName !== null ? (
+                    <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        className={`flex-1 min-w-0 px-1.5 py-0.5 rounded border text-sm font-bold ${isNight ? 'border-[#2a2b35] bg-[#14151a] text-slate-200' : 'border-slate-200 bg-white text-slate-800'}`}
+                        autoFocus
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter' && editingName.trim()) {
+                            await api.updateOffice(office.id, { name: editingName.trim() } as any)
+                            onOfficesChange()
+                            setEditingName(null)
+                          } else if (e.key === 'Escape') {
+                            setEditingName(null)
+                          }
+                        }}
+                        onBlur={async () => {
+                          if (editingName.trim() && editingName.trim() !== office.name) {
+                            await api.updateOffice(office.id, { name: editingName.trim() } as any)
+                            onOfficesChange()
+                          }
+                          setEditingName(null)
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <p
+                      className={`font-bold text-sm truncate ${isNight ? 'text-slate-200' : 'text-slate-800'} ${activeOfficeId === office.id ? 'cursor-text hover:underline decoration-dotted underline-offset-2' : ''}`}
+                      onDoubleClick={(e) => {
+                        if (activeOfficeId === office.id) {
+                          e.stopPropagation()
+                          setEditingName(office.name)
+                        }
+                      }}
+                    >
+                      {office.name}
+                    </p>
+                  )}
                   {office.description && (
                     <p className={`text-[10px] truncate ${isNight ? 'text-slate-400/70' : 'text-slate-400'}`}>{office.description}</p>
                   )}
@@ -167,22 +254,64 @@ export function OfficeSidebar({ onSelectOffice, onOfficesChange, isNight = false
                       </>
                     )
                   })()}
+
+                  {/* Çalışma dizini — sadece aktif ofiste göster */}
+                  {activeOfficeId === office.id && (
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1">
+                        <span className={`text-[9px] font-bold ${isNight ? 'text-slate-400/60' : 'text-slate-400'}`}>
+                          📁 {t('quickTask.workDir')}
+                        </span>
+                      </div>
+                      {editingWorkDir !== null ? (
+                        <div className="flex gap-1 mt-0.5">
+                          <input
+                            type="text"
+                            value={editingWorkDir}
+                            onChange={(e) => setEditingWorkDir(e.target.value)}
+                            placeholder={t('quickTask.workDirPlaceholder')}
+                            className={`flex-1 px-2 py-1 rounded border text-[10px] ${isNight ? 'border-[#2a2b35] bg-[#14151a] text-slate-200' : 'border-slate-200 bg-white text-slate-700'}`}
+                            autoFocus
+                            onKeyDown={async (e) => {
+                              if (e.key === 'Enter') {
+                                await api.updateOffice(office.id, { workDir: editingWorkDir.trim() } as any)
+                                onOfficesChange()
+                                setEditingWorkDir(null)
+                              } else if (e.key === 'Escape') {
+                                setEditingWorkDir(null)
+                              }
+                            }}
+                          />
+                          <button
+                            onClick={async () => {
+                              await api.updateOffice(office.id, { workDir: editingWorkDir.trim() } as any)
+                              onOfficesChange()
+                              setEditingWorkDir(null)
+                            }}
+                            className="px-1.5 py-1 rounded text-[9px] font-bold bg-[#7eb5a6]/20 text-[#7eb5a6]"
+                          >
+                            ✓
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setEditingWorkDir(office.workDir || '')}
+                          className={`w-full text-left mt-0.5 px-2 py-1 rounded text-[10px] truncate transition-all ${
+                            office.workDir
+                              ? isNight ? 'text-slate-300 bg-[#14151a]/50 hover:bg-[#14151a]' : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+                              : isNight ? 'text-slate-500/50 hover:text-slate-400' : 'text-slate-300 hover:text-slate-500'
+                          }`}
+                        >
+                          {office.workDir || t('quickTask.workDirPlaceholder')}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Şablon + Silme butonları */}
-              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                <button
-                  className="text-[#7eb5a6] hover:text-[#5c9a8b] text-xs font-bold px-1"
-                  title={t('sidebar.templateButton')}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setTemplateOfficeId(office.id)
-                    setShowTemplates(true)
-                  }}
-                >
-                  📦
-                </button>
+              {/* Silme butonu — sağ üst */}
+              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-all">
                 <button
                   className="text-red-400 hover:text-red-600 transition-all text-sm"
                   onClick={(e) => handleDelete(e, office.id, office.name)}
@@ -190,7 +319,31 @@ export function OfficeSidebar({ onSelectOffice, onOfficesChange, isNight = false
                   ×
                 </button>
               </div>
-            </motion.button>
+
+              {/* Aktif ofis: export + şablon butonları — workDir altında */}
+              {activeOfficeId === office.id && (
+                <div className="flex gap-1.5 mt-2 px-1" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${isNight ? 'text-[#7eb5a6]/70 hover:bg-[#7eb5a6]/10' : 'text-[#7eb5a6] hover:bg-[#7eb5a6]/10'}`}
+                    title={t('sidebar.exportOffice')}
+                    onClick={(e) => handleExport(e, office)}
+                  >
+                    ⬇ {t('sidebar.exportOffice')}
+                  </button>
+                  <button
+                    className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${isNight ? 'text-[#7eb5a6]/70 hover:bg-[#7eb5a6]/10' : 'text-[#7eb5a6] hover:bg-[#7eb5a6]/10'}`}
+                    title={t('sidebar.templateButton')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setTemplateOfficeId(office.id)
+                      setShowTemplates(true)
+                    }}
+                  >
+                    📦 {t('sidebar.templateButton')}
+                  </button>
+                </div>
+              )}
+            </motion.div>
           ))}
         </AnimatePresence>
 
@@ -255,11 +408,26 @@ export function OfficeSidebar({ onSelectOffice, onOfficesChange, isNight = false
             >
               {t('sidebar.newOffice')}
             </button>
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => setShowQuickTask(true)}
+                className={`flex-1 py-2.5 rounded-xl border text-xs font-bold transition-all ${isNight ? 'border-[#2a2b35] text-amber-400/70 hover:border-amber-500/40 hover:bg-amber-500/5' : 'border-slate-200 text-amber-600 hover:border-amber-300 hover:bg-amber-50'}`}
+              >
+                ⚡ {t('quickTask.title')}
+              </button>
+              <button
+                onClick={() => setShowTraining(true)}
+                className={`flex-1 py-2.5 rounded-xl border text-xs font-bold transition-all ${isNight ? 'border-[#2a2b35] text-purple-400/70 hover:border-purple-500/40 hover:bg-purple-500/5' : 'border-slate-200 text-purple-600 hover:border-purple-300 hover:bg-purple-50'}`}
+              >
+                🎓 {t('training.title')}
+              </button>
+            </div>
             <button
-              onClick={() => setShowTraining(true)}
-              className={`w-full py-2.5 rounded-xl border text-xs font-bold transition-all ${isNight ? 'border-[#2a2b35] text-purple-400/70 hover:border-purple-500/40 hover:bg-purple-500/5' : 'border-slate-200 text-purple-600 hover:border-purple-300 hover:bg-purple-50'}`}
+              onClick={handleImport}
+              disabled={importLoading}
+              className={`w-full py-2.5 rounded-xl border text-xs font-bold transition-all disabled:opacity-50 ${isNight ? 'border-[#2a2b35] text-cyan-400/70 hover:border-cyan-500/40 hover:bg-cyan-500/5' : 'border-slate-200 text-cyan-600 hover:border-cyan-300 hover:bg-cyan-50'}`}
             >
-              🎓 {t('training.title')}
+              {importLoading ? t('sidebar.importLoading') : `📥 ${t('sidebar.importOffice')}`}
             </button>
             <div className="flex gap-1.5">
               <button
@@ -326,6 +494,13 @@ export function OfficeSidebar({ onSelectOffice, onOfficesChange, isNight = false
           ))}
         </div>
       </div>
+
+      {/* Quick Task Panel */}
+      <AnimatePresence>
+        {showQuickTask && (
+          <QuickTaskPanel isNight={isNight} onClose={() => setShowQuickTask(false)} />
+        )}
+      </AnimatePresence>
 
       {/* Training Panel */}
       <AnimatePresence>

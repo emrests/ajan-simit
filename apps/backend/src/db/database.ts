@@ -122,6 +122,8 @@ const MIGRATIONS: { version: number; name: string; up: () => void }[] = [
         db.exec("ALTER TABLE agents ADD COLUMN subagent_id TEXT DEFAULT ''")
       if (!hasColumn('agents', 'training_profile_id'))
         db.exec("ALTER TABLE agents ADD COLUMN training_profile_id TEXT DEFAULT ''")
+      if (!hasColumn('agents', 'is_pm'))
+        db.exec('ALTER TABLE agents ADD COLUMN is_pm INTEGER DEFAULT 0')
 
       // ── projects sütun eklentileri ──
       if (!hasColumn('projects', 'work_dir'))
@@ -349,14 +351,52 @@ const MIGRATIONS: { version: number; name: string; up: () => void }[] = [
         db.exec("ALTER TABLE session_logs ADD COLUMN duration_sec INTEGER DEFAULT 0")
     }
   },
-  // ── Gelecekte yeni migration'lar buraya eklenir ──
-  // {
-  //   version: 2,
-  //   name: 'add_priority_to_tasks',
-  //   up: () => {
-  //     db.exec("ALTER TABLE tasks ADD COLUMN priority TEXT DEFAULT 'normal'")
-  //   }
-  // },
+  {
+    version: 2,
+    name: 'add_work_dir_to_offices',
+    up: () => {
+      if (!hasColumn('offices', 'work_dir'))
+        db.exec("ALTER TABLE offices ADD COLUMN work_dir TEXT DEFAULT ''")
+    }
+  },
+  {
+    version: 3,
+    name: 'add_agent_questions',
+    up: () => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_questions (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          office_id TEXT NOT NULL,
+          session_log_id TEXT,
+          session_id TEXT,
+          question TEXT NOT NULL,
+          options TEXT DEFAULT '[]',
+          status TEXT DEFAULT 'pending',
+          response TEXT,
+          created_at TEXT NOT NULL,
+          answered_at TEXT,
+          FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+        )
+      `)
+    }
+  },
+  {
+    version: 4,
+    name: 'add_is_pm_to_agents',
+    up: () => {
+      if (!hasColumn('agents', 'is_pm'))
+        db.exec('ALTER TABLE agents ADD COLUMN is_pm INTEGER DEFAULT 0')
+    }
+  },
+  {
+    version: 5,
+    name: 'add_work_dir_to_agents',
+    up: () => {
+      if (!hasColumn('agents', 'work_dir'))
+        db.exec("ALTER TABLE agents ADD COLUMN work_dir TEXT DEFAULT ''")
+    }
+  },
 ]
 
 // ---------------------------------------------------------------------------

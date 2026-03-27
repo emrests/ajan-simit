@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid'
 import { spawnSync, spawn } from 'child_process'
 import { db } from '../db/database'
 import { broadcastAll } from '../ws/server'
+import { detectRateLimit } from '../agents/processManager'
 
 export const trainingRouter = Router()
 
@@ -107,6 +108,25 @@ trainingRouter.delete('/training-profiles/:id', (req, res) => {
   res.json({ success: true })
 })
 
+// ─── Training Status Reset ───
+
+// POST /api/training-profiles/:id/reset — Takılı kalan eğitimi sıfırla
+trainingRouter.post('/training-profiles/:id/reset', (req, res) => {
+  const profile = db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(req.params.id) as any
+  if (!profile) return res.status(404).json({ error: 'Training profile not found' }) as any
+
+  const now = new Date().toISOString()
+  db.prepare("UPDATE training_profiles SET status = 'pending', updated_at = ? WHERE id = ?").run(now, req.params.id)
+
+  // Aktif run varsa error olarak işaretle
+  db.prepare("UPDATE training_runs SET status = 'error', error = 'Manuel sıfırlama', completed_at = ? WHERE profile_id = ? AND status IN ('analyzing', 'generating')")
+    .run(now, req.params.id)
+
+  const updated = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(req.params.id))
+  broadcastAll({ type: 'training:update', profile: updated })
+  res.json(updated)
+})
+
 // ─── Training Coach Session ───
 
 // POST /api/training-profiles/:id/train
@@ -133,7 +153,7 @@ trainingRouter.post('/training-profiles/:id/train', (req, res) => {
   let coachPrompt: string
 
   if (profile.mode === 'project') {
-    coachPrompt = `Sen bir ajan eğitim koçusun. Aşağıdaki proje hakkında kapsamlı bir eğitim dokümanı oluştur.
+    coachPrompt = `Sen bir ajan eğitim koçusun. Bu proje dizinini analiz et ve kapsamlı bir eğitim dokümanı oluştur.
 
 Kullanıcı açıklaması: ${profile.user_prompt || 'Proje hakkında genel eğitim dokümanı oluştur.'}
 
@@ -146,9 +166,11 @@ Kullanıcı açıklaması: ${profile.user_prompt || 'Proje hakkında genel eğit
 6. Tipik iş akışlarını dokümante et (yeni endpoint ekleme, DB değişikliği vb.)
 7. Önemli bağımlılıkları ve konfigürasyonları belirle
 
-Çıktın Markdown formatında, kapsamlı ve ajan için doğrudan kullanılabilir olmalı.
-Ajanın bu projeye yeni katılmış bir geliştirici gibi hemen çalışabilmesini sağla.
-Sadece Markdown çıktı ver, başka açıklama yapma.`
+ÖNEMLİ KURALLAR:
+- Çıktını düz Markdown olarak ver. Markdown code fence (\`\`\`markdown ... \`\`\`) ile SARMA.
+- Tüm bölümleri eksiksiz yaz. Yarıda bırakma, kısaltma, "..." ile atlama yapma.
+- Her bölümü bitir, sonra bir sonrakine geç. Dokümanı tam tamamla.
+- Ajanın bu projeye yeni katılmış bir geliştirici gibi hemen çalışabilmesini sağla.`
   } else {
     coachPrompt = `Sen bir ajan eğitim koçusun. "${profile.source || profile.name}" teknolojisi konusunda kapsamlı bir eğitim dokümanı oluştur.
 
@@ -164,13 +186,15 @@ Kullanıcı istekleri: ${profile.user_prompt || 'Bu teknoloji hakkında kapsaml�
 7. Deployment ve production best practices
 8. Güncel versiyon özellikleri ve değişiklikler
 
-En güncel bilgileri kullan. Çıktın Markdown formatında olmalı.
-Ajan bu teknolojiyle profesyonel seviyede çalışabilecek bilgiye sahip olmalı.
-Sadece Markdown çıktı ver, başka açıklama yapma.`
+ÖNEMLİ KURALLAR:
+- Çıktını düz Markdown olarak ver. Markdown code fence (\`\`\`markdown ... \`\`\`) ile SARMA.
+- Tüm bölümleri eksiksiz yaz. Yarıda bırakma, kısaltma, "..." ile atlama yapma.
+- Her bölümü bitir, sonra bir sonrakine geç. Dokümanı tam tamamla.
+- Ajan bu teknolojiyle profesyonel seviyede çalışabilecek bilgiye sahip olmalı.`
   }
 
   // Claude CLI'ı async olarak çalıştır
-  const cliArgs: string[] = ['--print']
+  const cliArgs: string[] = ['--print', '--output-format', 'text', '--verbose']
 
   // Proje modu: cwd olarak proje dizinini kullan (Claude o dizindeki dosyaları görür)
   const cwd = (profile.mode === 'project' && profile.source)
@@ -178,12 +202,23 @@ Sadece Markdown çıktı ver, başka açıklama yapma.`
     : process.cwd()
 
   // Async spawn — response'ı hemen döner, sonuç WS ile broadcast edilir
+  console.log(`[Training] Başlatılıyor: ${profile.name} (mode: ${profile.mode}, cwd: ${cwd})`)
+  console.log(`[Training] CLI args: claude ${cliArgs.join(' ')}`)
+
   const child = spawn('claude', cliArgs, {
     cwd,
     shell: true,
     env: { ...process.env },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
+
+  // 10 dakika timeout — takılma durumunda süreci sonlandır
+  const TRAINING_TIMEOUT = 10 * 60 * 1000
+  const timeoutHandle = setTimeout(() => {
+    console.warn(`[Training] Timeout: ${profile.name} (${TRAINING_TIMEOUT / 1000}s)`)
+    child.kill('SIGTERM')
+    setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 5000)
+  }, TRAINING_TIMEOUT)
 
   let stdout = ''
   let stderr = ''
@@ -198,8 +233,9 @@ Sadece Markdown çıktı ver, başka açıklama yapma.`
 
   // spawn hatası yakala (ör. claude komutu bulunamadı)
   child.on('error', (err) => {
+    clearTimeout(timeoutHandle)
     const completedAt = new Date().toISOString()
-    const errorMsg = `Spawn hatası: ${err.message}`
+    const errorMsg = `Spawn hatası: ${err.message}. Claude CLI yolu kontrol edin. Platform: ${process.platform}`
     console.error(`[Training] ${errorMsg}`)
     db.prepare("UPDATE training_runs SET status = 'error', error = ?, completed_at = ? WHERE id = ?")
       .run(errorMsg, completedAt, runId)
@@ -213,14 +249,71 @@ Sadece Markdown çıktı ver, başka açıklama yapma.`
   child.stdin.write(coachPrompt)
   child.stdin.end()
 
-  child.on('close', (code: number | null) => {
+  child.on('close', (code: number | null, signal: string | null) => {
+    clearTimeout(timeoutHandle)
     const completedAt = new Date().toISOString()
 
-    if (code !== 0 || !stdout.trim()) {
+    console.log(`[Training] Process kapandı: code=${code}, signal=${signal}, stdout=${stdout.length} bytes, stderr=${stderr.length} bytes`)
+    if (stderr) console.log(`[Training] stderr: ${stderr.slice(0, 1000)}`)
+
+    if ((code !== 0 && code !== null) || !stdout.trim()) {
+      // Rate limit algılama — otomatik yeniden deneme
+      const rateLimitInfo = detectRateLimit(stderr + ' ' + stdout)
+      if (rateLimitInfo) {
+        const delayMs = rateLimitInfo.retryAt.getTime() - Date.now()
+        const retryTimeStr = rateLimitInfo.retryAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const MAX_WAIT_MS = 4 * 60 * 60 * 1000
+
+        console.log(`[Training] Rate limit: ${profile.name} — ${rateLimitInfo.rawMatch}, retry at ${retryTimeStr}`)
+
+        if (delayMs > 0 && delayMs <= MAX_WAIT_MS) {
+          // Profili pending'e çevir (UI'da "Bekliyor" görünür)
+          db.prepare("UPDATE training_profiles SET status = 'pending', updated_at = ? WHERE id = ?").run(completedAt, profile.id)
+          db.prepare("UPDATE training_runs SET status = 'error', error = ?, completed_at = ? WHERE id = ?")
+            .run(`Rate limit — saat ${retryTimeStr}'de tekrar denenecek`, completedAt, runId)
+
+          const pendingProfile = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(profile.id))
+          broadcastAll({ type: 'training:update', profile: pendingProfile })
+
+          // Zamanlı yeniden deneme
+          setTimeout(async () => {
+            try {
+              console.log(`[Training] Rate limit retry başlatılıyor: ${profile.name}`)
+              // POST /training-profiles/:id/train endpoint'ini dahili olarak çağır
+              const currentProfile = db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(profile.id) as any
+              if (currentProfile && currentProfile.status === 'pending') {
+                // Doğrudan endpoint'e fetch yapmak yerine, profili analyzing'e çevir ve yeni spawn başlat
+                // Bu basit yaklaşım: profil hala pending ise tekrar eğitim başlat sinyali gönder
+                broadcastAll({ type: 'training:retry', profileId: profile.id })
+              }
+            } catch (e: any) {
+              console.error(`[Training] Rate limit retry hatası: ${e.message}`)
+            }
+          }, delayMs)
+        } else {
+          db.prepare("UPDATE training_runs SET status = 'error', error = ?, completed_at = ? WHERE id = ?")
+            .run(`Rate limit (${rateLimitInfo.rawMatch}) — bekleme süresi çok uzun`, completedAt, runId)
+          db.prepare("UPDATE training_profiles SET status = 'error', updated_at = ? WHERE id = ?")
+            .run(completedAt, profile.id)
+          const errorProfile = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(profile.id))
+          broadcastAll({ type: 'training:update', profile: errorProfile })
+        }
+        return
+      }
+
       // Hata durumu
-      const errorMsg = stderr
-        ? `Çıkış kodu: ${code}\n${stderr}`
-        : `Claude çalıştırılamadı veya boş çıktı döndü (çıkış kodu: ${code})`
+      let errorMsg: string
+      if (signal) {
+        errorMsg = `Process sinyal ile sonlandırıldı: ${signal}. Timeout veya bellek sorunu olabilir.`
+      } else if (code === null) {
+        errorMsg = `Process beklenmedik şekilde kapandı (code: null). stderr: ${stderr.slice(0, 500) || 'boş'}`
+      } else if (!stdout.trim()) {
+        errorMsg = `Claude boş çıktı döndü (çıkış kodu: ${code}). stderr: ${stderr.slice(0, 500) || 'boş'}`
+      } else {
+        errorMsg = stderr
+          ? `Çıkış kodu: ${code}\n${stderr.slice(0, 1000)}`
+          : `Claude çıkış kodu: ${code}`
+      }
       console.error(`[Training] Hata: ${errorMsg.slice(0, 500)}`)
       db.prepare("UPDATE training_runs SET status = 'error', error = ?, completed_at = ? WHERE id = ?")
         .run(errorMsg.slice(0, 2000), completedAt, runId)
@@ -241,11 +334,12 @@ Sadece Markdown çıktı ver, başka açıklama yapma.`
       content = stdout
     }
 
-    // Markdown bloğu varsa çıkar
-    const mdMatch = content.match(/```markdown\s*([\s\S]+?)\s*```/)
+    // Markdown bloğu varsa çıkar — greedy match ile tüm içeriği al
+    const mdMatch = content.match(/```markdown\s*([\s\S]+)\s*```\s*$/)
     if (mdMatch) content = mdMatch[1]
 
     // Profil içeriğini güncelle
+    console.log(`[Training] Tamamlandı: ${profile.name} (${content.length} karakter)`)
     db.prepare("UPDATE training_profiles SET content = ?, status = 'done', updated_at = ? WHERE id = ?")
       .run(content.trim(), completedAt, profile.id)
     db.prepare("UPDATE training_runs SET status = 'done', completed_at = ? WHERE id = ?")
@@ -326,7 +420,40 @@ function fileNameToProfileName(fileName: string): string {
     .replace(/\b\w/g, c => c.toUpperCase())
 }
 
+// GitHub API helper
+const ghHeaders = { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'SmithAgentOffice' }
+
+async function fetchGhDir(owner: string, repo: string, dirPath: string, branch: string): Promise<any[]> {
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}?ref=${branch}`
+  const resp = await fetch(apiUrl, { headers: ghHeaders })
+  if (!resp.ok) throw new Error(`GitHub API hatası: ${resp.status}`)
+  return await resp.json() as any[]
+}
+
+async function fetchRawFile(url: string): Promise<string> {
+  const resp = await fetch(url)
+  if (!resp.ok) throw new Error(`Dosya indirilemedi: ${resp.status}`)
+  return await resp.text()
+}
+
+// GitHub URL'den repo bilgilerini çıkar
+function parseGithubUrl(url: string): { owner: string; repo: string; branch: string; dirPath: string } | null {
+  // github.com/user/repo/tree/branch/path
+  const treeMatch = url.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+?)\/?\s*$/)
+  if (treeMatch) return { owner: treeMatch[1], repo: treeMatch[2], branch: treeMatch[3], dirPath: treeMatch[4] }
+
+  // github.com/user/repo (root)
+  const repoMatch = url.match(/github\.com\/([^/]+)\/([^/]+?)\/?$/)
+  if (repoMatch) return { owner: repoMatch[1], repo: repoMatch[2], branch: 'main', dirPath: '' }
+
+  return null
+}
+
 // POST /api/training-profiles/import-url — GitHub URL'den MD dosyaları çek
+// Desteklenen yapılar:
+// 1. Düz klasör: her .md dosyası → ayrı profil
+// 2. Plugin yapısı (skills/ altında alt klasörler): her alt klasördeki tüm .md → tek profil olarak birleştirilir
+// 3. Repo root: plugin.json varsa skills + agents otomatik çekilir
 trainingRouter.post('/training-profiles/import-url', async (req, res) => {
   const { url } = req.body
   if (!url || typeof url !== 'string') {
@@ -339,9 +466,7 @@ trainingRouter.post('/training-profiles/import-url', async (req, res) => {
 
     // Raw URL: tek dosya
     if (url.includes('raw.githubusercontent.com') && url.endsWith('.md')) {
-      const resp = await fetch(url)
-      if (!resp.ok) throw new Error(`Dosya indirilemedi: ${resp.status}`)
-      const content = await resp.text()
+      const content = await fetchRawFile(url)
       const fileName = url.split('/').pop() || 'imported.md'
 
       const id = uuid()
@@ -351,43 +476,137 @@ trainingRouter.post('/training-profiles/import-url', async (req, res) => {
       `).run(id, fileNameToProfileName(fileName), `GitHub: ${fileName}`, content, url, now)
       profiles.push(rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(id)))
 
-    // GitHub dizin URL'si: github.com/user/repo/tree/branch/path
     } else {
-      const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)/)
-      if (!match) throw new Error('Geçersiz GitHub URL. Beklenen format: github.com/user/repo/tree/branch/path')
-      const [, owner, repo, branch, dirPath] = match
+      const gh = parseGithubUrl(url)
+      if (!gh) throw new Error('Geçersiz GitHub URL. Beklenen: github.com/user/repo veya github.com/user/repo/tree/branch/path')
 
-      // GitHub Contents API ile dizindeki dosyaları listele
-      const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}?ref=${branch}`
-      const dirResp = await fetch(apiUrl, {
-        headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'SmithAgentOffice' }
-      })
-      if (!dirResp.ok) throw new Error(`GitHub API hatası: ${dirResp.status}`)
-      const files = await dirResp.json() as any[]
+      const { owner, repo, branch, dirPath } = gh
 
-      const mdFiles = files.filter((f: any) => f.type === 'file' && f.name.endsWith('.md'))
-      if (mdFiles.length === 0) throw new Error('Dizinde .md dosyası bulunamadı')
+      // Repo root veya plugin yapısı mı kontrol et
+      let targetPath = dirPath
+      let isPluginRepo = false
 
-      // Her MD dosyasını indir
-      for (const file of mdFiles) {
+      if (!dirPath) {
+        // Root URL: plugin.json var mı kontrol et
         try {
-          const rawUrl = file.download_url || `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dirPath}/${file.name}`
-          const fileResp = await fetch(rawUrl)
-          if (!fileResp.ok) continue
-          const content = await fileResp.text()
+          const rootFiles = await fetchGhDir(owner, repo, '', branch)
+          const hasPluginDir = rootFiles.some((f: any) => f.name === '.claude-plugin' && f.type === 'dir')
+          const hasSkillsDir = rootFiles.some((f: any) => f.name === 'skills' && f.type === 'dir')
+          const hasAgentsDir = rootFiles.some((f: any) => f.name === 'agents' && f.type === 'dir')
 
+          if (hasPluginDir || hasSkillsDir) {
+            isPluginRepo = true
+            // Skills ve agents klasörlerini tara
+            if (hasSkillsDir) targetPath = 'skills'
+
+            // Agents klasörünü de çek
+            if (hasAgentsDir) {
+              const agentFiles = await fetchGhDir(owner, repo, 'agents', branch)
+              const agentMds = agentFiles.filter((f: any) => f.type === 'file' && f.name.endsWith('.md'))
+              for (const file of agentMds) {
+                try {
+                  const content = await fetchRawFile(file.download_url)
+                  const id = uuid()
+                  db.prepare(`
+                    INSERT INTO training_profiles (id, name, description, content, mode, source, user_prompt, status, created_at)
+                    VALUES (?, ?, ?, ?, 'technology', ?, '', 'done', ?)
+                  `).run(id, fileNameToProfileName(file.name), `Agent: ${repo}/${file.name}`, content, file.download_url, now)
+                  const profile = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(id))
+                  broadcastAll({ type: 'training:update', profile })
+                  profiles.push(profile)
+                } catch (e: any) {
+                  console.error(`[Training] Agent ${file.name} indirilemedi: ${e.message}`)
+                }
+              }
+            }
+          } else {
+            // Düz repo — root'taki MD'leri çek
+            const mdFiles = rootFiles.filter((f: any) => f.type === 'file' && f.name.endsWith('.md') && f.name !== 'README.md' && f.name !== 'LICENSE')
+            for (const file of mdFiles) {
+              try {
+                const content = await fetchRawFile(file.download_url)
+                const id = uuid()
+                db.prepare(`
+                  INSERT INTO training_profiles (id, name, description, content, mode, source, user_prompt, status, created_at)
+                  VALUES (?, ?, ?, ?, 'technology', ?, '', 'done', ?)
+                `).run(id, fileNameToProfileName(file.name), `GitHub: ${repo}/${file.name}`, content, file.download_url, now)
+                const profile = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(id))
+                broadcastAll({ type: 'training:update', profile })
+                profiles.push(profile)
+              } catch {}
+            }
+            if (profiles.length === 0) throw new Error('Repoda skill dosyası bulunamadı')
+            res.json({ profiles, count: profiles.length })
+            return
+          }
+        } catch (e: any) {
+          if (profiles.length > 0) { res.json({ profiles, count: profiles.length }); return }
+          throw e
+        }
+      }
+
+      // Hedef dizini listele
+      const entries = await fetchGhDir(owner, repo, targetPath, branch)
+      const mdFiles = entries.filter((f: any) => f.type === 'file' && f.name.endsWith('.md'))
+      const subDirs = entries.filter((f: any) => f.type === 'dir')
+
+      // Alt klasörler varsa → her klasör = bir skill profili (tüm MD'leri birleştir)
+      if (subDirs.length > 0) {
+        for (const dir of subDirs) {
+          try {
+            const subEntries = await fetchGhDir(owner, repo, `${targetPath}/${dir.name}`, branch)
+            const subMds = subEntries.filter((f: any) => f.type === 'file' && f.name.endsWith('.md'))
+            if (subMds.length === 0) continue
+
+            // Tüm MD dosyalarını birleştir — SKILL.md önce
+            const sorted = subMds.sort((a: any, b: any) => {
+              if (a.name === 'SKILL.md') return -1
+              if (b.name === 'SKILL.md') return 1
+              return a.name.localeCompare(b.name)
+            })
+
+            let combinedContent = ''
+            for (const file of sorted) {
+              try {
+                const content = await fetchRawFile(file.download_url)
+                combinedContent += `${combinedContent ? '\n\n---\n\n' : ''}${content}`
+              } catch {}
+            }
+
+            if (!combinedContent.trim()) continue
+
+            const id = uuid()
+            const profileName = fileNameToProfileName(dir.name)
+            db.prepare(`
+              INSERT INTO training_profiles (id, name, description, content, mode, source, user_prompt, status, created_at)
+              VALUES (?, ?, ?, ?, 'technology', ?, '', 'done', ?)
+            `).run(id, profileName, `Skill: ${repo}/${dir.name} (${sorted.length} dosya)`, combinedContent, `https://github.com/${owner}/${repo}/tree/${branch}/${targetPath}/${dir.name}`, now)
+            const profile = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(id))
+            broadcastAll({ type: 'training:update', profile })
+            profiles.push(profile)
+          } catch (e: any) {
+            console.error(`[Training] Klasör ${dir.name} işlenemedi: ${e.message}`)
+          }
+        }
+      }
+
+      // Kök dizindeki MD dosyalarını da ekle (README hariç)
+      for (const file of mdFiles) {
+        if (file.name === 'README.md' || file.name === 'LICENSE') continue
+        try {
+          const content = await fetchRawFile(file.download_url)
           const id = uuid()
           db.prepare(`
             INSERT INTO training_profiles (id, name, description, content, mode, source, user_prompt, status, created_at)
             VALUES (?, ?, ?, ?, 'technology', ?, '', 'done', ?)
-          `).run(id, fileNameToProfileName(file.name), `GitHub: ${file.name}`, content, rawUrl, now)
+          `).run(id, fileNameToProfileName(file.name), `GitHub: ${repo}/${file.name}`, content, file.download_url, now)
           const profile = rowToProfile(db.prepare('SELECT * FROM training_profiles WHERE id = ?').get(id))
           broadcastAll({ type: 'training:update', profile })
           profiles.push(profile)
-        } catch (e: any) {
-          console.error(`[Training] ${file.name} indirilemedi: ${e.message}`)
-        }
+        } catch {}
       }
+
+      if (profiles.length === 0) throw new Error('Dizinde .md dosyası veya skill klasörü bulunamadı')
     }
 
     res.json({ profiles, count: profiles.length })

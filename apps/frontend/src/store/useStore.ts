@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Office, Agent, AgentMessage, AgentStatus, Project, ProjectCompleteSummary } from '@smith/types'
+import type { Office, Agent, AgentMessage, AgentStatus, Project, ProjectCompleteSummary, AgentQuestion } from '@smith/types'
 
 interface AppState {
   offices: Office[]
@@ -7,6 +7,7 @@ interface AppState {
   messages: AgentMessage[]
   wsConnected: boolean
   completedProject: ProjectCompleteSummary | null
+  pendingQuestion: AgentQuestion | null
 
   // Actions
   setOffices: (offices: Office[]) => void
@@ -21,6 +22,7 @@ interface AppState {
   setMessages: (messages: AgentMessage[]) => void
   setWsConnected: (v: boolean) => void
   setCompletedProject: (summary: ProjectCompleteSummary | null) => void
+  setPendingQuestion: (question: AgentQuestion | null) => void
 
   // Derived
   activeOffice: () => Office | null
@@ -32,6 +34,7 @@ export const useStore = create<AppState>((set, get) => ({
   messages: [],
   wsConnected: false,
   completedProject: null,
+  pendingQuestion: null,
 
   setOffices: (offices) => set({ offices }),
   addOffice: (office) => set((s) => ({ offices: [...s.offices, office] })),
@@ -70,6 +73,7 @@ export const useStore = create<AppState>((set, get) => ({
   setMessages: (messages) => set({ messages }),
   setWsConnected: (wsConnected) => set({ wsConnected }),
   setCompletedProject: (completedProject) => set({ completedProject }),
+  setPendingQuestion: (pendingQuestion) => set({ pendingQuestion }),
 
   activeOffice: () => {
     const { offices, activeOfficeId } = get()

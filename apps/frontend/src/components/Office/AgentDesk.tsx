@@ -8,6 +8,7 @@ import { ANIMAL_EMOJIS } from '@smith/types'
 interface AgentDeskProps {
   agent: Agent
   onClick?: () => void
+  onQuickTask?: () => void
   isNight?: boolean
   showDesk?: boolean
   seated?: boolean
@@ -20,6 +21,8 @@ const STATUS_COLORS: Record<string, string> = {
   reading: 'bg-violet-100 text-violet-700',
   waiting: 'bg-amber-50 text-amber-600',
   celebrating: 'bg-emerald-100 text-emerald-700',
+  waiting_input: 'bg-purple-100 text-purple-700',
+  rate_limited: 'bg-orange-100 text-orange-700',
 }
 
 const STATUS_ANIM_CLASS: Record<string, string> = {
@@ -29,6 +32,8 @@ const STATUS_ANIM_CLASS: Record<string, string> = {
   reading: 'animal-reading',
   waiting: 'animal-waiting',
   celebrating: 'animal-celebrating',
+  waiting_input: 'animal-waiting',
+  rate_limited: 'animal-waiting',
 }
 
 const STATUS_KEY: Record<string, string> = {
@@ -38,9 +43,11 @@ const STATUS_KEY: Record<string, string> = {
   reading: 'status.reading',
   waiting: 'status.waiting',
   celebrating: 'status.celebrating',
+  waiting_input: 'status.waiting_input',
+  rate_limited: 'status.rate_limited',
 }
 
-export function AgentDesk({ agent, onClick, isNight = false, showDesk = true, seated = false }: AgentDeskProps) {
+export function AgentDesk({ agent, onClick, onQuickTask, isNight = false, showDesk = true, seated = false }: AgentDeskProps) {
   const { t } = useTranslation()
   const [hovered, setHovered] = useState(false)
 
@@ -64,13 +71,32 @@ export function AgentDesk({ agent, onClick, isNight = false, showDesk = true, se
         }`}
         style={!isNight ? { boxShadow: '0 2px 8px rgba(0,0,0,0.08)' } : undefined}
       >
-        <span className={`text-xs font-bold ${isNight ? 'text-blue-100' : 'text-slate-800'}`}>{ANIMAL_EMOJIS[agent.animal]} {agent.name}</span>
+        <span className={`text-xs font-bold ${isNight ? 'text-blue-100' : 'text-slate-800'}`}>{ANIMAL_EMOJIS[agent.animal]} {agent.name}{agent.isPm && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-500 font-bold">PM</span>}</span>
+        {agent.workDir && (
+          <span className={`text-[8px] truncate max-w-[120px] ${isNight ? 'text-slate-500' : 'text-slate-400'}`} title={agent.workDir}>
+            📂 {agent.workDir.split(/[/\\]/).slice(-2).join('/')}
+          </span>
+        )}
         {/* Claude Code oturum aktif indikatörü */}
         {agent.sessionPid && (
           <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shrink-0" title={t('agent.claudeCodeActive')} />
         )}
         {agent.watchPath && !agent.sessionPid && (
           <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" title={t('agent.jsonlWatching')} />
+        )}
+        {/* Hızlı görev ikonu — hover'da görünür */}
+        {onQuickTask && hovered && agent.status === 'idle' && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onQuickTask() }}
+            className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] shrink-0 transition-all ${
+              isNight
+                ? 'bg-amber-500/30 text-amber-300 hover:bg-amber-500/50'
+                : 'bg-amber-100 text-amber-600 hover:bg-amber-200'
+            }`}
+            title={t('agent.quickTask')}
+          >
+            ⚡
+          </button>
         )}
       </div>
 
@@ -82,6 +108,20 @@ export function AgentDesk({ agent, onClick, isNight = false, showDesk = true, se
       {/* Hayvan karakteri */}
       <div className={`${STATUS_ANIM_CLASS[agent.status]} ${seated ? 'animal-seated' : ''} relative`}>
         <AnimalSVG animal={agent.animal} status={agent.status} size={80} seated={seated} />
+
+        {/* Soru bekliyor badge */}
+        {agent.status === 'waiting_input' && (
+          <div className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-purple-500 flex items-center justify-center animate-pulse shadow-lg">
+            <span className="text-white text-xs font-bold">?</span>
+          </div>
+        )}
+
+        {/* Rate limit badge */}
+        {agent.status === 'rate_limited' && (
+          <div className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center animate-pulse shadow-lg">
+            <span className="text-white text-[10px] font-bold">⏳</span>
+          </div>
+        )}
 
         {/* Konuşma balonu — koyu cam stili */}
         <AnimatePresence>

@@ -35,6 +35,8 @@ export function AgentModal({ officeId, agent, projects = [], onClose, onSave, on
   const [animal, setAnimal] = useState<AnimalType>(agent?.animal ?? 'cat')
   const [systemPrompt, setSystemPrompt] = useState(agent?.systemPrompt ?? '')
   const [model, setModel] = useState(agent?.model ?? '')
+  const [isPm, setIsPm] = useState(agent?.isPm ?? false)
+  const [agentWorkDir, setAgentWorkDir] = useState(agent?.workDir ?? '')
   const [maxTurns, setMaxTurns] = useState(agent?.maxTurns ?? 0)
   // Faz 11 — Gelişmiş ayarlar
   const [effortLevel, setEffortLevel] = useState(agent?.effortLevel ?? '')
@@ -470,7 +472,7 @@ export function AgentModal({ officeId, agent, projects = [], onClose, onSave, on
     setError('')
     try {
       const payload = {
-        name, role, animal, systemPrompt, model, maxTurns,
+        name, role, animal, systemPrompt, model, maxTurns, isPm, workDir: agentWorkDir,
         effortLevel: effortLevel || undefined,
         allowedTools, disallowedTools, environmentVars,
         appendSystemPrompt: appendSystemPrompt || undefined,
@@ -657,6 +659,36 @@ export function AgentModal({ officeId, agent, projects = [], onClose, onSave, on
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
                   placeholder={t('agent.rolePlaceholder')}
+                  className={inputCls}
+                />
+              </div>
+
+              {/* PM Toggle */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPm(!isPm)}
+                  className={`relative w-10 h-5 rounded-full transition-colors ${isPm ? 'bg-blue-500' : 'bg-slate-300'}`}
+                >
+                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${isPm ? 'translate-x-5' : ''}`} />
+                </button>
+                <div>
+                  <span className="text-xs font-bold text-[#7a5c3f]">{t('agent.isPm')}</span>
+                  <p className="text-[10px] text-[#a08060]">{t('agent.isPmDesc')}</p>
+                </div>
+              </div>
+
+              {/* Çalışma Dizini */}
+              <div>
+                <label className="block text-xs font-bold text-[#7a5c3f] mb-1">
+                  {t('agent.workDir')} <span className="font-normal text-[#a08060]">({t('common.optional')})</span>
+                </label>
+                <p className="text-[10px] text-[#a08060] mb-1.5">{t('agent.workDirDesc')}</p>
+                <input
+                  type="text"
+                  value={agentWorkDir}
+                  onChange={(e) => setAgentWorkDir(e.target.value)}
+                  placeholder={t('agent.workDirPlaceholder')}
                   className={inputCls}
                 />
               </div>

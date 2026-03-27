@@ -16,6 +16,8 @@ export type AgentStatus =
   | 'typing'
   | 'reading'
   | 'waiting'
+  | 'waiting_input'
+  | 'rate_limited'
   | 'celebrating'
 
 export type ProjectStatus = 'planning' | 'active' | 'review' | 'done'
@@ -45,6 +47,8 @@ export interface Agent {
   outputSchema?: string
   subagentId?: string          // Faz 16: Bağlı subagent profili
   trainingProfileId?: string   // Faz 21: Atanmış eğitim profili
+  isPm?: boolean               // Proje Yöneticisi rolü
+  workDir?: string             // Ajan bazlı çalışma dizini
   deskPosition: DeskPosition
   status: AgentStatus
   currentTask?: string
@@ -111,6 +115,7 @@ export interface Office {
   name: string
   description: string
   theme: 'light' | 'dark'
+  workDir?: string
   agents: Agent[]
   projects: Project[]
   createdAt: string
@@ -205,6 +210,7 @@ export type WsMessage =
   | { type: 'worktree:merge'; projectId: string; worktreeId: string; success: boolean; message?: string }
   | { type: 'training:update'; profile: TrainingProfile }
   | { type: 'training:run'; run: TrainingRun }
+  | { type: 'agent:question'; agentId: string; question: AgentQuestion }
   | { type: 'ping' }
   | { type: 'pong' }
 
@@ -564,7 +570,25 @@ export const STATUS_LABELS: Record<AgentStatus, string> = {
   typing: 'Yazıyor',
   reading: 'Okuyor',
   waiting: 'Bekliyor',
+  waiting_input: 'Yanıt Bekliyor',
+  rate_limited: 'Rate Limit',
   celebrating: 'Tamamladı!',
+}
+
+// Ajan Soru-Cevap Sistemi
+export interface AgentQuestion {
+  id: string
+  agentId: string
+  agentName: string
+  animal: AnimalType
+  officeId: string
+  sessionId?: string
+  question: string
+  options: string[]
+  status: 'pending' | 'answered' | 'expired'
+  response?: string
+  createdAt: string
+  answeredAt?: string
 }
 
 // Faz 17 — Model Fiyatlandırma (USD / milyon token)

@@ -488,9 +488,24 @@ export function TrainingPanel({ isNight = false, onClose }: TrainingPanelProps) 
                       )}
                     </button>
                   )}
-                  {selectedProfile.status === 'analyzing' && (
-                    <div className={`px-4 py-2 rounded-lg text-xs font-bold ${STATUS_COLORS.analyzing} flex items-center gap-1`}>
-                      <span className="animate-spin">⏳</span> {t('training.status.analyzing')}
+                  {(selectedProfile.status === 'analyzing' || selectedProfile.status === 'generating') && (
+                    <div className="flex items-center gap-2">
+                      <div className={`px-4 py-2 rounded-lg text-xs font-bold ${STATUS_COLORS[selectedProfile.status]} flex items-center gap-1`}>
+                        <span className="animate-spin">⏳</span> {t(`training.status.${selectedProfile.status}`)}
+                      </div>
+                      <button
+                        onClick={async () => {
+                          await api.resetTraining(selectedProfile.id)
+                          const updated = await api.getTrainingProfile(selectedProfile.id)
+                          setProfiles(prev => prev.map(p => p.id === selectedProfile.id ? updated : p))
+                          setSelectedProfile(updated)
+                          setTrainLoading(null)
+                        }}
+                        className="px-3 py-2 rounded-lg text-xs font-bold text-amber-500 hover:bg-amber-500/10 border border-amber-500/30 transition-all"
+                        title={t('training.reset')}
+                      >
+                        ↺ {t('training.reset')}
+                      </button>
                     </div>
                   )}
                   {selectedProfile.status === 'done' && (

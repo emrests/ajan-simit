@@ -5,7 +5,7 @@ import os from 'os'
 import { db } from '../db/database'
 import { broadcast } from '../ws/server'
 import { watchAgent, unwatchAgent } from '../watcher/jsonlWatcher'
-import { startSession, stopSession, getSessionStatus, getAllSessions } from '../agents/processManager'
+import { startSession, stopSession, getSessionStatus, getAllSessions, pmCoordinateQuickTask } from '../agents/processManager'
 
 export const sessionsRouter = Router()
 
@@ -424,7 +424,7 @@ sessionsRouter.post('/agents/:id/status', (req, res) => {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as any
   if (!agent) return res.status(404).json({ error: 'Agent bulunamadı' }) as any
 
-  const validStatuses = ['idle', 'thinking', 'typing', 'reading', 'waiting', 'celebrating']
+  const validStatuses = ['idle', 'thinking', 'typing', 'reading', 'waiting', 'celebrating', 'waiting_input', 'rate_limited']
   if (status && !validStatuses.includes(status)) {
     return res.status(400).json({ error: 'Geçersiz status' }) as any
   }
@@ -442,4 +442,207 @@ sessionsRouter.post('/agents/:id/status', (req, res) => {
   })
 
   res.json({ success: true })
+})
+
+// ─── Hızlı Görev Logları ───
+
+// GET /api/quick-tasks/:officeId — Proje bağlamı olmadan çalıştırılan görevler
+sessionsRouter.get('/quick-tasks/:officeId', (req, res) => {
+  const logs = db.prepare(`
+    SELECT sl.*, a.name as agent_name, a.animal
+    FROM session_logs sl
+    JOIN agents a ON sl.agent_id = a.id
+    WHERE a.office_id = ? AND (sl.task_id IS NULL OR sl.task_id = '')
+    ORDER BY sl.started_at DESC LIMIT 20
+  `).all(req.params.officeId) as any[]
+
+  res.json(logs.map((l: any) => ({
+    id: l.id,
+    agentId: l.agent_id,
+    agentName: l.agent_name,
+    animal: l.animal,
+    inputTokens: l.input_tokens,
+    outputTokens: l.output_tokens,
+    totalTokens: l.total_tokens,
+    model: l.model,
+    costUsd: l.cost_usd ?? 0,
+    durationSec: l.duration_sec ?? 0,
+    startedAt: l.started_at,
+    endedAt: l.ended_at ?? undefined,
+  })))
+})
+
+// ─── Ajan Soru-Cevap (Question/Respond) ───
+
+// GET /api/agents/:id/question — Ajanın bekleyen sorusunu getir
+sessionsRouter.get('/agents/:id/question', (req, res) => {
+  const row = db.prepare(
+    "SELECT * FROM agent_questions WHERE agent_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1"
+  ).get(req.params.id) as any
+
+  if (!row) return res.json(null)
+
+  const agent = db.prepare('SELECT name, animal FROM agents WHERE id = ?').get(req.params.id) as any
+
+  res.json({
+    id: row.id,
+    agentId: row.agent_id,
+    agentName: agent?.name ?? '',
+    animal: agent?.animal ?? 'fox',
+    officeId: row.office_id,
+    sessionId: row.session_id,
+    question: row.question,
+    options: (() => { try { return JSON.parse(row.options || '[]') } catch { return [] } })(),
+    status: row.status,
+    response: row.response,
+    createdAt: row.created_at,
+    answeredAt: row.answered_at,
+  })
+})
+
+// POST /api/agents/:id/respond — Soruya yanıt ver + resume session
+sessionsRouter.post('/agents/:id/respond', (req, res) => {
+  const { id } = req.params
+  const { response } = req.body
+
+  if (!response || !response.trim()) {
+    return res.status(400).json({ error: 'response gerekli' }) as any
+  }
+
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as any
+  if (!agent) return res.status(404).json({ error: 'Agent bulunamadı' }) as any
+
+  const question = db.prepare(
+    "SELECT * FROM agent_questions WHERE agent_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1"
+  ).get(id) as any
+
+  if (!question) return res.status(404).json({ error: 'Bekleyen soru bulunamadı' }) as any
+
+  // Soruyu yanıtla
+  db.prepare(
+    'UPDATE agent_questions SET status = ?, response = ?, answered_at = ? WHERE id = ?'
+  ).run('answered', response.trim(), new Date().toISOString(), question.id)
+
+  // Ofis work_dir'ini al
+  const office = db.prepare('SELECT work_dir FROM offices WHERE id = ?').get(agent.office_id) as any
+  const workDir = office?.work_dir || '.'
+
+  try {
+    // Resume session ile devam et
+    const result = startSession(id, workDir, response.trim(), undefined, question.session_id)
+    res.json({ success: true, ...result })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// GET /api/offices/:id/questions — Ofisteki tüm bekleyen soruları getir
+sessionsRouter.get('/offices/:id/questions', (req, res) => {
+  const rows = db.prepare(
+    "SELECT aq.*, a.name as agent_name, a.animal FROM agent_questions aq JOIN agents a ON aq.agent_id = a.id WHERE aq.office_id = ? AND aq.status = 'pending' ORDER BY aq.created_at DESC"
+  ).all(req.params.id) as any[]
+
+  res.json(rows.map((row: any) => ({
+    id: row.id,
+    agentId: row.agent_id,
+    agentName: row.agent_name,
+    animal: row.animal,
+    officeId: row.office_id,
+    sessionId: row.session_id,
+    question: row.question,
+    options: (() => { try { return JSON.parse(row.options || '[]') } catch { return [] } })(),
+    status: row.status,
+    createdAt: row.created_at,
+  })))
+})
+
+// POST /api/agents/:id/question/skip — Soruyu atla (expired yap)
+sessionsRouter.post('/agents/:id/question/skip', (req, res) => {
+  const question = db.prepare(
+    "SELECT * FROM agent_questions WHERE agent_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1"
+  ).get(req.params.id) as any
+
+  if (!question) return res.status(404).json({ error: 'Bekleyen soru bulunamadı' }) as any
+
+  db.prepare(
+    'UPDATE agent_questions SET status = ?, answered_at = ? WHERE id = ?'
+  ).run('expired', new Date().toISOString(), question.id)
+
+  // Ajanı idle'a döndür
+  db.prepare('UPDATE agents SET status = ? WHERE id = ?').run('idle', req.params.id)
+
+  const agent = db.prepare('SELECT office_id FROM agents WHERE id = ?').get(req.params.id) as any
+  if (agent) {
+    broadcast(agent.office_id, {
+      type: 'agent:status',
+      agentId: req.params.id,
+      status: 'idle',
+      currentTask: null,
+    })
+  }
+
+  res.json({ success: true })
+})
+
+// POST /api/offices/:officeId/quick-task-coordinated — PM koordinasyonlu hızlı görev
+sessionsRouter.post('/offices/:officeId/quick-task-coordinated', async (req, res) => {
+  const { officeId } = req.params
+  const { task, workDir } = req.body
+
+  if (!task?.trim()) return res.status(400).json({ error: 'task gerekli' }) as any
+
+  // Ofisteki ajanları al
+  const agents = db.prepare('SELECT * FROM agents WHERE office_id = ?').all(officeId) as any[]
+  if (agents.length === 0) return res.status(404).json({ error: 'Ofiste ajan bulunamadı' }) as any
+
+  // PM ajanı bul (is_pm=1 ve idle)
+  const pmAgent = agents.find((a: any) => a.is_pm && a.status === 'idle')
+  const idleAgents = agents.filter((a: any) => a.status === 'idle' && !a.is_pm)
+
+  if (!pmAgent || idleAgents.length === 0) {
+    // PM yok veya dağıtılacak ajan yok — fallback: herkese gönder
+    const allIdle = agents.filter((a: any) => a.status === 'idle')
+    const results = []
+    for (const a of allIdle) {
+      try {
+        startSession(a.id, a.work_dir || workDir || '', task.trim())
+        results.push({ agentId: a.id, success: true })
+      } catch (e: any) {
+        results.push({ agentId: a.id, success: false, error: e.message })
+      }
+    }
+    return res.json({ mode: 'direct', results, count: results.filter((r: any) => r.success).length }) as any
+  }
+
+  // PM koordinasyonu
+  const effectiveWorkDir = workDir || ''
+  const availableAgents = idleAgents.map((a: any) => ({
+    id: a.id,
+    name: a.name,
+    model: a.model || '',
+    role: a.role || '',
+    workDir: a.work_dir || '',
+  }))
+
+  try {
+    const result = await pmCoordinateQuickTask(officeId, pmAgent.id, task.trim(), effectiveWorkDir, availableAgents)
+
+    if (!result.success) {
+      // PM başarısız — fallback: herkese gönder
+      const fallbackResults = []
+      for (const a of idleAgents) {
+        try {
+          startSession(a.id, a.work_dir || effectiveWorkDir, task.trim())
+          fallbackResults.push({ agentId: a.id, success: true })
+        } catch (e: any) {
+          fallbackResults.push({ agentId: a.id, success: false, error: e.message })
+        }
+      }
+      return res.json({ mode: 'fallback', error: result.error, results: fallbackResults, count: fallbackResults.filter((r: any) => r.success).length }) as any
+    }
+
+    res.json({ mode: 'coordinated', pmAgentId: pmAgent.id, subtasks: result.subtasks })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
 })

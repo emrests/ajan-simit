@@ -213,10 +213,15 @@ projectsRouter.post('/tasks/:id/run', (req, res) => {
   if (!project?.work_dir) return res.status(400).json({ error: 'Proje klasörü tanımlı değil' }) as any
 
   // Faz 9 — contextMode'a göre bağlam oluştur
-  const contextText = buildContextForProject(task.project_id, project.context_mode ?? 'full')
-  const prompt = contextText
-    ? `Proje: ${project.name}\nKlasör: ${project.work_dir}\n\nTamamlananlar:\n${contextText}\n\nSenin görevin:\n${task.description}`
-    : `Proje: ${project.name}\nKlasör: ${project.work_dir}\n\nGörev:\n${task.description}`
+  let prompt: string
+  if (project.context_mode === 'none') {
+    prompt = task.description
+  } else {
+    const contextText = buildContextForProject(task.project_id, project.context_mode ?? 'full')
+    prompt = contextText
+      ? `Proje: ${project.name}\nKlasör: ${project.work_dir}\n\nTamamlananlar:\n${contextText}\n\nSenin görevin:\n${task.description}`
+      : `Proje: ${project.name}\nKlasör: ${project.work_dir}\n\nGörev:\n${task.description}`
+  }
 
   try {
     const result = startSession(task.assigned_agent_id, project.work_dir, prompt, task.id)
@@ -243,7 +248,8 @@ projectsRouter.post('/projects/:id/run', (req, res) => {
   }
 
   // Faz 9 — contextMode'a göre bağlam oluştur
-  const contextText = buildContextForProject(req.params.id, project.context_mode ?? 'full')
+  const isNoneContext = project.context_mode === 'none'
+  const contextText = isNoneContext ? '' : buildContextForProject(req.params.id, project.context_mode ?? 'full')
 
   const results: any[] = []
   const startedAgents = new Set<string>()
@@ -256,9 +262,11 @@ projectsRouter.post('/projects/:id/run', (req, res) => {
 
     if (startedAgents.has(task.assigned_agent_id)) continue
 
-    const prompt = contextText
-      ? `Proje: ${project.name}\nKlasör: ${project.work_dir}\n\nTamamlananlar:\n${contextText}\n\nSenin görevin:\n${task.description}`
-      : `Proje: ${project.name}\nKlasör: ${project.work_dir}\n\nGörev:\n${task.description}`
+    const prompt = isNoneContext
+      ? task.description
+      : contextText
+        ? `Proje: ${project.name}\nKlasör: ${project.work_dir}\n\nTamamlananlar:\n${contextText}\n\nSenin görevin:\n${task.description}`
+        : `Proje: ${project.name}\nKlasör: ${project.work_dir}\n\nGörev:\n${task.description}`
 
     try {
       const result = startSession(task.assigned_agent_id, project.work_dir, prompt, task.id)

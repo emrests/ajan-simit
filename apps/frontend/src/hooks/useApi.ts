@@ -1,4 +1,4 @@
-import type { Office, Agent, Project, Task, AnimalType, ApprovalRequest, Skill, SessionLog, Hook, HookLog, MCPServer, Worktree, Team, Teammate, Subagent, DashboardStats, SessionLogExtended, TrainingProfile, TrainingRun } from '@smith/types'
+import type { Office, Agent, Project, Task, AnimalType, ApprovalRequest, Skill, SessionLog, Hook, HookLog, MCPServer, Worktree, Team, Teammate, Subagent, DashboardStats, SessionLogExtended, TrainingProfile, TrainingRun, AgentQuestion } from '@smith/types'
 
 const BASE = '/api'
 
@@ -280,6 +280,8 @@ export const api = {
     req<TrainingProfile>('/training-profiles/import', { method: 'POST', body: JSON.stringify(data) }),
   startTraining: (id: string) =>
     req<TrainingRun>(`/training-profiles/${id}/train`, { method: 'POST' }),
+  resetTraining: (id: string) =>
+    req<TrainingProfile>(`/training-profiles/${id}/reset`, { method: 'POST' }),
   getTrainingRuns: (profileId: string) =>
     req<TrainingRun[]>(`/training-profiles/${profileId}/runs`),
   importFromGithub: (url: string) =>
@@ -294,6 +296,23 @@ export const api = {
     req<void>(`/agents/${agentId}/training`, { method: 'POST', body: JSON.stringify({ profileId }) }),
   removeAgentTraining: (agentId: string) =>
     req<void>(`/agents/${agentId}/training`, { method: 'DELETE' }),
+
+  // Quick Tasks
+  getQuickTasks: (officeId: string) => req<any[]>(`/quick-tasks/${officeId}`),
+  startCoordinatedQuickTask: (officeId: string, workDir: string, task: string) =>
+    req<any>(`/offices/${officeId}/quick-task-coordinated`, { method: 'POST', body: JSON.stringify({ task, workDir }) }),
+
+  // Agent Questions
+  getAgentQuestion: (agentId: string) => req<AgentQuestion | null>(`/agents/${agentId}/question`),
+  respondToAgent: (agentId: string, response: string) =>
+    req<any>(`/agents/${agentId}/respond`, { method: 'POST', body: JSON.stringify({ response }) }),
+  skipAgentQuestion: (agentId: string) =>
+    req<any>(`/agents/${agentId}/question/skip`, { method: 'POST' }),
+  getOfficeQuestions: (officeId: string) => req<AgentQuestion[]>(`/offices/${officeId}/questions`),
+
+  // Office Export / Import
+  exportOffice: (id: string) => req<any>(`/offices/${id}/export`),
+  importOffice: (data: any) => req<Office>('/offices/import', { method: 'POST', body: JSON.stringify(data) }),
 
   // Seed Demo
   seedDemo: () => req<Office>('/seed-demo', { method: 'POST' }),

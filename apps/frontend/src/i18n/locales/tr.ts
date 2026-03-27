@@ -63,6 +63,10 @@ const translations: Record<string, string> = {
   'sidebar.resetDbLoading': 'Sıfırlanıyor...',
   'sidebar.resetDbTitle': 'Tüm veritabanını sıfırla — ofisler, ajanlar, projeler, skills, subagentlar, hooklar, takımlar',
   'sidebar.templateButton': 'Hazır takım şablonu ekle',
+  'sidebar.exportOffice': 'Ofisi Dışa Aktar',
+  'sidebar.importOffice': 'Ofis İçe Aktar',
+  'sidebar.importLoading': 'İçe aktarılıyor...',
+  'sidebar.importError': 'İçe aktarma başarısız — geçersiz dosya formatı',
 
   // Confirm dialogs (sidebar)
   'confirm.resetDb': 'Tüm veritabanını sıfırlamak istediğinize emin misiniz?\n\nBu işlem geri alınamaz. Tüm ofisler, ajanlar, projeler, görevler, skills, subagentlar, hooklar, takımlar ve MCP sunucuları silinecek.',
@@ -100,6 +104,7 @@ const translations: Record<string, string> = {
   // ============================================================
   'agent.claudeCodeActive': 'Claude Code aktif',
   'agent.jsonlWatching': 'JSONL izleniyor',
+  'agent.quickTask': 'Hızlı Görev',
 
   // ============================================================
   // Status labels — from @smith/types STATUS_LABELS
@@ -110,6 +115,8 @@ const translations: Record<string, string> = {
   'status.reading': 'Okuyor',
   'status.waiting': 'Bekliyor',
   'status.celebrating': 'Tamamladı!',
+  'status.waiting_input': 'Yanıt Bekliyor',
+  'status.rate_limited': 'Rate Limit',
 
   // ============================================================
   // Team status labels — from @smith/types
@@ -236,6 +243,11 @@ const translations: Record<string, string> = {
   'agent.agentNamePlaceholder': 'Örn: Mehmet, Alex, Luna...',
   'agent.role': 'Rol / Uzmanlık',
   'agent.rolePlaceholder': 'Örn: Backend Dev, Proje Yöneticisi, QA...',
+  'agent.isPm': 'Proje Yöneticisi (PM)',
+  'agent.isPmDesc': 'Bu ajan hızlı görevlerde koordinasyon yaparak görevleri diğer ajanlara dağıtır.',
+  'agent.workDir': 'Çalışma Dizini',
+  'agent.workDirPlaceholder': 'Örn: D:\\projeler\\backend',
+  'agent.workDirDesc': 'Bu ajanın varsayılan çalışma dizini. Boş bırakılırsa ofis dizini kullanılır.',
   'agent.model': 'Claude Modeli',
   'agent.modelDefault': 'Varsayılan (claude-sonnet-4-6)',
   'agent.modelOpus': 'Claude Opus 4.6 (en güçlü)',
@@ -304,7 +316,6 @@ const translations: Record<string, string> = {
   'agent.startSession': 'Yeni Oturum Başlat',
   'agent.startSessionButton': 'Claude Oturumu Başlat',
   'agent.startingSession': 'Başlatılıyor...',
-  'agent.workDir': 'Çalışma Dizini',
   'agent.selectProject': '— Proje seç —',
   'agent.manualInput': 'Manuel gir',
   'agent.task': 'Görev',
@@ -454,6 +465,7 @@ const translations: Record<string, string> = {
   'project.contextFull': 'Tam — Tüm tamamlanan görevler bağlam olarak verilir',
   'project.contextCompact': 'Kompakt — Son 3 görev + özet (token tasarruflu)',
   'project.contextMinimal': 'Minimal — Sadece "N/M görev tamamlandı" (en tasarruflu)',
+  'project.contextNone': 'Yok — Proje bağlamı eklenmez, sadece görev açıklaması',
   'project.claudeMd': 'CLAUDE.md',
   'project.claudeMdLabel': 'proje kuralları',
   'project.claudeMdDesc': 'Proje klasörüne yazılır, Claude oturumlarında otomatik okunur. System prompt\'u kısa tutun, kuralları buraya yazın.',
@@ -676,14 +688,16 @@ const translations: Record<string, string> = {
   // Help — HelpPanel.tsx
   // ============================================================
   'help.title': 'Kullanım Kılavuzu',
-  'help.subtitle': 'SmithAgentOffice — Tüm Özellikler',
-  'help.footer': 'SmithAgentOffice v1.0 — Claude Code Agent Orchestration Platform',
+  'help.subtitle': 'AjanSimit — Tüm Özellikler',
+  'help.footer': 'AjanSimit — Claude Code Ajan Orkestrasyon Platformu',
 
   // Help sections
   'help.start.title': 'Hızlı Başlangıç',
   'help.agents.title': 'Ajan Yönetimi',
+  'help.quickTask.title': 'Hızlı Görev',
   'help.projects.title': 'Proje & Görev Yönetimi',
   'help.sessions.title': 'Oturum & Transcript',
+  'help.training.title': 'Ajan Eğitimi',
   'help.workflow.title': 'İş Akışı Ayarları',
   'help.skills.title': 'Yetenekler (Skills)',
   'help.hooks.title': 'Hooks (Olay Otomasyonu)',
@@ -778,6 +792,7 @@ const translations: Record<string, string> = {
   'training.description': 'Koça Açıklama',
   'training.startTraining': 'Eğitimi Başlat',
   'training.retrain': 'Yeniden Eğit',
+  'training.reset': 'Sıfırla',
   'training.status.pending': 'Bekliyor',
   'training.status.analyzing': 'Analiz Ediliyor',
   'training.status.generating': 'Oluşturuluyor',
@@ -804,6 +819,43 @@ const translations: Record<string, string> = {
   'training.fetch': 'Çek',
   'training.importSuccess': '{count} profil oluşturuldu',
   'training.importing': 'İçe aktarılıyor...',
+
+  // Quick Task
+  'quickTask.title': 'Hızlı Görev',
+  'quickTask.selectAgent': 'Ajan Seç',
+  'quickTask.noAgents': 'Bu ofiste ajan yok',
+  'quickTask.workDir': 'Çalışma Dizini',
+  'quickTask.workDirPlaceholder': 'C:\\projeler\\uygulama',
+  'quickTask.saveWorkDir': 'Kaydet',
+  'quickTask.savedWorkDir': 'Bu dizin ofis için kayıtlı',
+  'quickTask.task': 'Görev Açıklaması',
+  'quickTask.taskPlaceholder': 'Örn: Bana X işlemini yapacak bir endpoint oluştur...',
+  'quickTask.start': 'Başlat',
+  'quickTask.starting': 'Başlatılıyor...',
+  'quickTask.started': 'Görev başlatıldı!',
+  'quickTask.recentTasks': 'Son Görevler',
+  'quickTask.noAgent': 'Lütfen bir ajan seçin',
+  'quickTask.noTask': 'Lütfen görev açıklaması girin',
+  'quickTask.allAgents': 'Tüm Ajanlar',
+  'quickTask.allAgentsDesc': 'Görevi tüm idle ajanlara gönder',
+  'quickTask.allAgentsHint': '{{count}} ajan hazır',
+  'quickTask.noIdleAgents': 'Şu an müsait ajan yok — tüm ajanlar meşgul',
+  'quickTask.startedAll': '{{succeeded}}/{{total}} ajan başlatıldı',
+  'quickTask.pmWillCoordinate': 'PM koordine edecek',
+  'quickTask.pmCoordinating': 'PM görev planlıyor...',
+  'quickTask.pmDone': 'PM {{count}} ajana görev dağıttı',
+
+  // ============================================================
+  // Agent Question — Soru-Cevap sistemi
+  // ============================================================
+  'agentQuestion.title': 'Ajan Sorusu',
+  'agentQuestion.from': '{{name}} soruyor',
+  'agentQuestion.waiting': 'Yanıt bekliyor...',
+  'agentQuestion.options': 'Seçenekler',
+  'agentQuestion.respond': 'Yanıtla',
+  'agentQuestion.skip': 'Atla',
+  'agentQuestion.placeholder': 'Yanıtınızı yazın...',
+  'agentQuestion.answered': 'Yanıtlandı',
 }
 
 export default translations

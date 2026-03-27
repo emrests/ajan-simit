@@ -37,6 +37,66 @@ function encodeWorkDir(workDir: string): string {
   return workDir.trim().replace(/[/\\]/g, '-').replace(/:/g, '-')
 }
 
+// JSONL dosya yolundan Claude session ID çıkar
+// Format: ~/.claude/projects/<encoded-dir>/<session-id>.jsonl
+function extractSessionId(jsonlPath: string): string | null {
+  if (!jsonlPath) return null
+  const basename = path.basename(jsonlPath, '.jsonl')
+  return basename || null
+}
+
+// Rate limit algılama — Claude CLI stderr/stdout'tan saat bilgisi çıkar
+export function detectRateLimit(text: string): { retryAt: Date; rawMatch: string } | null {
+  if (!text) return null
+
+  // Çeşitli rate limit mesaj formatları
+  const patterns = [
+    // "try again at 8:00 PM" / "try again at 20:00"
+    /try again (?:at|after)\s+(\d{1,2}):(\d{2})\s*(AM|PM)?/i,
+    // "reset at 8 PM" / "resets at 20:00"
+    /resets?\s+(?:at|after)\s+(\d{1,2}):?(\d{2})?\s*(AM|PM)?/i,
+    // "available at 8:00 PM"
+    /available\s+(?:at|after)\s+(\d{1,2}):(\d{2})\s*(AM|PM)?/i,
+    // "wait until 8:00 PM"
+    /wait\s+until\s+(\d{1,2}):(\d{2})\s*(AM|PM)?/i,
+  ]
+
+  // Genel rate limit ipuçları (saat bilgisi olmadan)
+  const rateLimitKeywords = /rate.?limit|usage.?cap|overloaded|too many requests|quota exceeded/i
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) {
+      let hours = parseInt(match[1], 10)
+      const minutes = parseInt(match[2] || '0', 10)
+      const ampm = match[3]?.toUpperCase()
+
+      // AM/PM → 24 saat formatına çevir
+      if (ampm === 'PM' && hours < 12) hours += 12
+      if (ampm === 'AM' && hours === 12) hours = 0
+
+      const now = new Date()
+      const retryAt = new Date(now)
+      retryAt.setHours(hours, minutes, 0, 0)
+
+      // Geçmiş saat ise yarına kaydır
+      if (retryAt.getTime() <= now.getTime()) {
+        retryAt.setDate(retryAt.getDate() + 1)
+      }
+
+      return { retryAt, rawMatch: match[0] }
+    }
+  }
+
+  // Saat bilgisi olmadan rate limit mesajı — 5 dakika sonra dene
+  if (rateLimitKeywords.test(text)) {
+    const retryAt = new Date(Date.now() + 5 * 60 * 1000)
+    return { retryAt, rawMatch: 'rate limit (5dk sonra yeniden denenecek)' }
+  }
+
+  return null
+}
+
 // Claude projects dizinini bul — büyük/küçük harf farklılıklarını handle et
 function findClaudeProjectDir(workDir: string): string {
   const encoded = encodeWorkDir(workDir)
@@ -252,6 +312,157 @@ JSON dışında başka bir şey yazma.`
       `⛓ Sonraki görevler tetikleniyor:\n${nextList}`,
       'system'
     )
+  })
+}
+
+// PM Koordinasyonlu Hızlı Görev — PM önce planlar, sonra alt görevleri ajanlara dağıtır
+export async function pmCoordinateQuickTask(
+  officeId: string,
+  pmAgentId: string,
+  task: string,
+  workDir: string,
+  availableAgents: Array<{ id: string; name: string; model: string; role: string; workDir?: string }>
+): Promise<{ success: boolean; subtasks?: number; error?: string }> {
+  const pmAgent = db.prepare('SELECT * FROM agents WHERE id = ?').get(pmAgentId) as any
+  if (!pmAgent) return { success: false, error: 'PM ajan bulunamadı' }
+
+  // PM status → thinking
+  db.prepare('UPDATE agents SET status = ?, current_task = ? WHERE id = ?')
+    .run('thinking', '📋 Görev planlanıyor...', pmAgentId)
+  broadcast(officeId, { type: 'agent:status', agentId: pmAgentId, status: 'thinking', currentTask: '📋 Görev planlanıyor...' })
+  saveAndBroadcastMessage(officeId, pmAgentId, pmAgent.name, `📋 Görev analiz ediliyor ve alt görevlere bölünüyor...`, 'system')
+
+  const agentListStr = availableAgents
+    .map(a => `- ${a.name} (rol: ${a.role}, model: ${a.model || 'default'}${a.workDir ? `, dizin: ${a.workDir}` : ''})`)
+    .join('\n')
+
+  const planPrompt = `Sen bir proje yöneticisi (PM) ajansın. Aşağıdaki görevi analiz et ve mevcut ajanlara dağıt.
+
+Görev: ${task}
+Çalışma dizini: ${workDir}
+
+Mevcut ajanlar:
+${agentListStr}
+
+KURALLAR:
+- Görevi anlamlı alt görevlere böl (her ajan için en fazla 1 görev)
+- Her ajana uzmanlık alanına uygun görev ver
+- Alt görev açıklamalarını detaylı ve net yaz (ajan ne yapacağını tam anlasın)
+- Tüm ajanları kullanmak zorunda değilsin — sadece gerekli olanları kullan
+- Kendine (PM'e) görev atama
+
+JSON formatında yanıt ver (SADECE JSON, başka metin ekleme):
+{
+  "plan": "Genel plan açıklaması (1-2 cümle)",
+  "subtasks": [
+    { "agentName": "Ajan Adı", "task": "Detaylı görev açıklaması" }
+  ]
+}`
+
+  return new Promise((resolve) => {
+    const cliArgs = ['--print', '--dangerously-skip-permissions', '--output-format', 'text', '--max-turns', '5']
+    if (pmAgent.model) cliArgs.push('--model', pmAgent.model)
+
+    const pmProc = spawn('claude', cliArgs, {
+      cwd: workDir || process.cwd(),
+      shell: true,
+      env: { ...process.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+
+    let stdout = ''
+    let stderr = ''
+
+    pmProc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+    pmProc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+
+    // 2 dakika timeout
+    const timeout = setTimeout(() => {
+      console.warn(`[PM-QuickTask] Timeout`)
+      try { pmProc.kill('SIGTERM') } catch {}
+    }, 120000)
+
+    pmProc.on('error', (err) => {
+      clearTimeout(timeout)
+      console.error(`[PM-QuickTask] Spawn hatası: ${err.message}`)
+      db.prepare('UPDATE agents SET status = ?, current_task = NULL WHERE id = ?').run('idle', pmAgentId)
+      broadcast(officeId, { type: 'agent:status', agentId: pmAgentId, status: 'idle', currentTask: null })
+      resolve({ success: false, error: err.message })
+    })
+
+    pmProc.stdin.write(planPrompt)
+    pmProc.stdin.end()
+
+    pmProc.on('close', (code) => {
+      clearTimeout(timeout)
+
+      if (code !== 0 || !stdout.trim()) {
+        console.error(`[PM-QuickTask] Hata: code=${code}, stderr=${stderr.slice(0, 200)}`)
+        db.prepare('UPDATE agents SET status = ?, current_task = NULL WHERE id = ?').run('idle', pmAgentId)
+        broadcast(officeId, { type: 'agent:status', agentId: pmAgentId, status: 'idle', currentTask: null })
+        saveAndBroadcastMessage(officeId, pmAgentId, pmAgent.name, `❌ Plan oluşturulamadı — görevler doğrudan ajanlara gönderilecek`, 'system')
+        resolve({ success: false, error: 'PM planlama başarısız' })
+        return
+      }
+
+      // JSON parse
+      try {
+        // JSON bloğunu bul
+        const jsonMatch = stdout.match(/```json\s*([\s\S]+?)\s*```/) || stdout.match(/(\{[\s\S]+\})/)
+        const parsed = JSON.parse(jsonMatch ? jsonMatch[1] : stdout)
+
+        if (!parsed.subtasks || !Array.isArray(parsed.subtasks) || parsed.subtasks.length === 0) {
+          throw new Error('Alt görev bulunamadı')
+        }
+
+        // Plan mesajını gönder
+        saveAndBroadcastMessage(officeId, pmAgentId, pmAgent.name, `📋 Plan: ${parsed.plan || 'Görevler dağıtılıyor'}`, 'agent')
+
+        let startedCount = 0
+        for (const subtask of parsed.subtasks) {
+          const targetAgent = availableAgents.find(
+            a => a.name.toLowerCase() === subtask.agentName?.toLowerCase()
+          )
+          if (!targetAgent) {
+            console.warn(`[PM-QuickTask] Ajan bulunamadı: ${subtask.agentName}`)
+            continue
+          }
+
+          // PM'den ajana mesaj
+          saveAndBroadcastMessage(
+            officeId, pmAgentId, pmAgent.name,
+            `📌 ${targetAgent.name}'a görev atandı: ${subtask.task.slice(0, 100)}`,
+            'agent-to-agent'
+          )
+
+          // Ajanın oturumunu başlat — ajan dizini varsa onu kullan
+          try {
+            startSession(targetAgent.id, targetAgent.workDir || workDir, subtask.task)
+            startedCount++
+          } catch (e: any) {
+            console.error(`[PM-QuickTask] ${targetAgent.name} başlatılamadı: ${e.message}`)
+          }
+        }
+
+        // PM idle'a dön
+        db.prepare('UPDATE agents SET status = ?, current_task = NULL WHERE id = ?').run('idle', pmAgentId)
+        broadcast(officeId, { type: 'agent:status', agentId: pmAgentId, status: 'idle', currentTask: null })
+
+        saveAndBroadcastMessage(
+          officeId, pmAgentId, pmAgent.name,
+          `✅ ${startedCount} ajan görevlendirildi`,
+          'system'
+        )
+
+        resolve({ success: true, subtasks: startedCount })
+      } catch (e: any) {
+        console.error(`[PM-QuickTask] JSON parse hatası: ${e.message}, stdout: ${stdout.slice(0, 200)}`)
+        db.prepare('UPDATE agents SET status = ?, current_task = NULL WHERE id = ?').run('idle', pmAgentId)
+        broadcast(officeId, { type: 'agent:status', agentId: pmAgentId, status: 'idle', currentTask: null })
+        saveAndBroadcastMessage(officeId, pmAgentId, pmAgent.name, `❌ Plan parse edilemedi — görevler doğrudan ajanlara gönderilecek`, 'system')
+        resolve({ success: false, error: 'JSON parse hatası' })
+      }
+    })
   })
 }
 
@@ -784,7 +995,7 @@ function extractTaskDescription(prompt: string): string {
   return lines[lines.length - 1]?.slice(0, 120) ?? prompt.slice(0, 120)
 }
 
-export function startSession(agentId: string, workDir: string, task: string, taskId?: string) {
+export function startSession(agentId: string, workDir: string, task: string, taskId?: string, resumeSessionId?: string) {
   workDir = workDir?.trim() || process.cwd()
   // Mevcut oturum varsa durdur
   if (activeSessions.has(agentId)) {
@@ -878,6 +1089,13 @@ export function startSession(agentId: string, workDir: string, task: string, tas
 
   if (skillsBlock) promptParts.push(`[Yetenekler/Skills]:\n${skillsBlock}`)
 
+  // Soru-Cevap formatı talimatı
+  promptParts.push(`[Soru Formatı]: Eğer kullanıcıdan bilgi veya onay alman gerekiyorsa, yanıtının sonuna şu formatı ekle:
+[SORU] Sorun buraya [/SORU]
+İsterseniz seçenekler de ekleyebilirsin:
+[SEÇENEK] Seçenek 1 [/SEÇENEK]
+[SEÇENEK] Seçenek 2 [/SEÇENEK]`)
+
   // Faz 11 — Yapılandırılmış çıktı şeması (görev > ajan)
   let effectiveOutputSchema = agent.output_schema || ''
   if (taskId) {
@@ -949,6 +1167,7 @@ export function startSession(agentId: string, workDir: string, task: string, tas
   // Task'ı -p argümanı yerine stdin üzerinden gönder.
   // Windows shell'de -p "..." özel karakterleri ({, }, ", \n) bozar.
   const cliArgs = ['--print', '--verbose', '--dangerously-skip-permissions', '--output-format', 'stream-json']
+  if (resumeSessionId) cliArgs.push('--resume', resumeSessionId)
   if (agent.model) cliArgs.push('--model', agent.model)
   if (effectiveMaxTurns > 0) cliArgs.push('--max-turns', String(effectiveMaxTurns))
 
@@ -1059,7 +1278,7 @@ export function startSession(agentId: string, workDir: string, task: string, tas
     }
   }
 
-  console.log(`[Process ${agentId}] Claude CLI başlatılıyor — cwd: ${effectiveWorkDir}, args: ${cliArgs.join(' ')}, promptLength: ${fullPrompt.length}`)
+  console.log(`[Process ${agentId}] Claude CLI başlatılıyor — model: ${agent.model || 'default'}, cwd: ${effectiveWorkDir}, args: ${cliArgs.join(' ')}, promptLength: ${fullPrompt.length}`)
 
   const proc = spawn('claude', cliArgs, {
     cwd: effectiveWorkDir,
@@ -1168,9 +1387,11 @@ export function startSession(agentId: string, workDir: string, task: string, tas
 
   // stdout'u izle — JSON stream mesajları
   let lastOutputTime = Date.now()
+  let stuckWarned = false
   let buffer = ''
   proc.stdout?.on('data', (chunk: Buffer) => {
     lastOutputTime = Date.now()
+    stuckWarned = false
     buffer += chunk.toString()
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? ''
@@ -1191,9 +1412,9 @@ export function startSession(agentId: string, workDir: string, task: string, tas
     console.error(`[Process ${agentId}] stderr:`, chunk.toString().slice(0, 200))
   })
 
-  // Takılı kalma kontrolü — 60s uyar, 300s (5 dk) sonra otomatik kill
-  const STUCK_WARN_MS = 60000
-  const STUCK_KILL_MS = 300000
+  // Takılı kalma kontrolü — 180s uyar, 600s (10 dk) sonra otomatik kill
+  const STUCK_WARN_MS = 180000
+  const STUCK_KILL_MS = 600000
   const stuckCheck = setInterval(() => {
     if (!activeSessions.has(agentId)) {
       clearInterval(stuckCheck)
@@ -1209,7 +1430,8 @@ export function startSession(agentId: string, workDir: string, task: string, tas
       )
       try { proc.kill('SIGTERM') } catch {}
       setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 5000)
-    } else if (elapsed > STUCK_WARN_MS) {
+    } else if (elapsed > STUCK_WARN_MS && !stuckWarned) {
+      stuckWarned = true
       saveAndBroadcastMessage(
         agent.office_id, agentId, agent.name,
         `⏳ ${Math.round(elapsed / 1000)}s boyunca yanıt yok — Claude düşünüyor veya takılmış olabilir`,
@@ -1297,6 +1519,89 @@ export function startSession(agentId: string, workDir: string, task: string, tas
     activeSessions.delete(agentId)
     unwatchAgent(agentId)
 
+    // Soru tespiti: session başarılı bittiyse son mesajı kontrol et
+    if (code === 0 && session.lastResultText) {
+      const questionMatch = session.lastResultText.match(/\[SORU\]([\s\S]+?)\[\/SORU\]/)
+      const optionsMatches = [...session.lastResultText.matchAll(/\[SEÇENEK\]([\s\S]+?)\[\/SEÇENEK\]/g)]
+      const endsWithQuestion = !questionMatch && session.lastResultText.trim().endsWith('?')
+
+      if (questionMatch || endsWithQuestion) {
+        const questionText = questionMatch ? questionMatch[1].trim() : session.lastResultText.trim()
+        const options = optionsMatches.map(m => m[1].trim())
+        const sessionId = extractSessionId(session.jsonlPath)
+        const questionId = `aq_${Date.now()}_${agentId.slice(0, 8)}`
+
+        try {
+          db.prepare(
+            'INSERT INTO agent_questions (id, agent_id, office_id, session_log_id, session_id, question, options, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          ).run(
+            questionId,
+            agentId,
+            agent.office_id,
+            session.sessionLogId ?? null,
+            sessionId,
+            questionText,
+            JSON.stringify(options),
+            'pending',
+            new Date().toISOString()
+          )
+
+          // Agent durumunu waiting_input yap
+          db.prepare('UPDATE agents SET status = ?, current_task = NULL, session_pid = NULL, current_task_id = NULL WHERE id = ?')
+            .run('waiting_input', agentId)
+
+          broadcast(agent.office_id, {
+            type: 'agent:status',
+            agentId,
+            status: 'waiting_input' as any,
+            currentTask: null,
+          })
+
+          // Soru bilgisini WS ile bildir
+          broadcast(agent.office_id, {
+            type: 'agent:question',
+            agentId,
+            question: {
+              id: questionId,
+              agentId,
+              agentName: agent.name,
+              animal: agent.animal,
+              officeId: agent.office_id,
+              sessionId,
+              question: questionText,
+              options,
+              status: 'pending',
+              createdAt: new Date().toISOString(),
+            },
+          } as any)
+
+          saveAndBroadcastMessage(
+            agent.office_id, agentId, agent.name,
+            `❓ ${questionText.slice(0, 120)}`,
+            'system'
+          )
+
+          console.log(`[Question] Agent ${agentId} soru sordu: ${questionText.slice(0, 80)}`)
+
+          // Hook'ları tetikle (session stop)
+          if (hookProjectId) {
+            executeHooks('SessionStop', {
+              officeId: agent.office_id,
+              projectId: hookProjectId,
+              agentId,
+              taskId: completedTaskId,
+              workDir,
+            }).catch(() => {})
+          }
+
+          return // Normal idle/celebrating akışına girme
+        } catch (e: any) {
+          console.error(`[Question] Soru kaydedilemedi: ${e.message}`)
+          // Hata durumunda normal akışa devam et
+        }
+      }
+    }
+
     const finalStatus = code === 0 ? 'celebrating' : 'idle'
     db.prepare('UPDATE agents SET status = ?, current_task = NULL, session_pid = NULL, current_task_id = NULL WHERE id = ?')
       .run(finalStatus, agentId)
@@ -1338,6 +1643,72 @@ export function startSession(agentId: string, workDir: string, task: string, tas
       }, 3000)
     } else {
       const errDetail = stderrBuf.trim().slice(0, 400)
+
+      // Rate limit algılama — hata politikasından ÖNCE kontrol et
+      const rateLimitInfo = detectRateLimit(stderrBuf + ' ' + (session.lastResultText || ''))
+      if (rateLimitInfo) {
+        const delayMs = rateLimitInfo.retryAt.getTime() - Date.now()
+        const retryTimeStr = rateLimitInfo.retryAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const MAX_WAIT_MS = 4 * 60 * 60 * 1000 // 4 saat
+
+        console.log(`[RateLimit] Ajan ${agentId}: ${rateLimitInfo.rawMatch} — retry at ${retryTimeStr} (${Math.round(delayMs / 60000)} dk sonra)`)
+
+        // Ajan durumunu rate_limited yap
+        db.prepare('UPDATE agents SET status = ? WHERE id = ?').run('rate_limited', agentId)
+        broadcast(agent.office_id, {
+          type: 'agent:status',
+          agentId,
+          status: 'rate_limited',
+          currentTask: agent.current_task,
+        })
+
+        if (delayMs > 0 && delayMs <= MAX_WAIT_MS) {
+          saveAndBroadcastMessage(
+            agent.office_id, agentId, agent.name,
+            `⏳ Rate limit — saat ${retryTimeStr}'de tekrar denenecek (${rateLimitInfo.rawMatch})`,
+            'system'
+          )
+
+          // Zamanlı yeniden deneme
+          setTimeout(() => {
+            try {
+              const currentAgent = db.prepare('SELECT status FROM agents WHERE id = ?').get(agentId) as any
+              // Hala rate_limited ise tekrar dene (kullanıcı manuel iptal etmemiş olmalı)
+              if (currentAgent?.status === 'rate_limited') {
+                console.log(`[RateLimit] Yeniden deneme başlatılıyor: ${agentId}`)
+                if (completedTaskId) {
+                  db.prepare("UPDATE tasks SET status = 'in_progress' WHERE id = ?").run(completedTaskId)
+                }
+                startSession(agentId, workDir, task, completedTaskId)
+              } else {
+                console.log(`[RateLimit] Ajan ${agentId} artık rate_limited değil, yeniden deneme iptal edildi`)
+              }
+            } catch (e: any) {
+              console.error(`[RateLimit] Yeniden deneme hatası: ${e.message}`)
+              db.prepare('UPDATE agents SET status = ? WHERE id = ?').run('idle', agentId)
+              broadcast(agent.office_id, { type: 'agent:status', agentId, status: 'idle', currentTask: null })
+            }
+          }, delayMs)
+        } else {
+          // Çok uzun bekleme veya negatif süre
+          saveAndBroadcastMessage(
+            agent.office_id, agentId, agent.name,
+            `⏳ Rate limit algılandı (${rateLimitInfo.rawMatch}). Bekleme süresi çok uzun — lütfen manuel olarak tekrar deneyin.`,
+            'system'
+          )
+          db.prepare('UPDATE agents SET status = ?, current_task = NULL, session_pid = NULL, current_task_id = NULL WHERE id = ?')
+            .run('idle', agentId)
+          broadcast(agent.office_id, { type: 'agent:status', agentId, status: 'idle', currentTask: null })
+        }
+
+        // Hook'ları tetikle
+        if (hookProjectId) {
+          executeHooks('SessionStop', { officeId: agent.office_id, projectId: hookProjectId, agentId, taskId: completedTaskId, workDir }).catch(() => {})
+        }
+        activeSessions.delete(agentId)
+        return // Normal hata akışına girme
+      }
+
       saveAndBroadcastMessage(
         agent.office_id,
         agentId,

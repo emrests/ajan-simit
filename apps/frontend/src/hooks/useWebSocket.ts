@@ -6,7 +6,7 @@ const WS_URL = 'ws://localhost:3001'
 
 export function useWebSocket(officeId: string | null) {
   const wsRef = useRef<WebSocket | null>(null)
-  const { updateAgentStatus, updateProject, addMessage, setWsConnected, setCompletedProject } = useStore()
+  const { updateAgentStatus, updateProject, addMessage, setWsConnected, setCompletedProject, setPendingQuestion } = useStore()
 
   useEffect(() => {
     if (!officeId) return
@@ -35,6 +35,9 @@ export function useWebSocket(officeId: string | null) {
             break
           case 'project:complete':
             setCompletedProject(msg.summary)
+            break
+          case 'agent:question':
+            setPendingQuestion((msg as any).question)
             break
         }
       } catch {}
